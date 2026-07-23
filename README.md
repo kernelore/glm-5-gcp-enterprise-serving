@@ -8,12 +8,24 @@
 > [!IMPORTANT]
 > **Disclaimer:** This repository is a **personal engineering project and reference architecture**. It is **not** an official Google product, is **not** covered by any Google Cloud Service Level Agreements (SLAs), and is **not** subject to official Google support channels. All code, scripts, and architectural models are provided *"as-is"* without warranty for educational, experimental, and benchmarking purposes.
 
-**Target Hardware:** Google Kubernetes Engine (GKE) Blackwell (`a4-highgpu-8g` — 8x NVIDIA B200 HGX per node)  
-**Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous Agentic Workflows (`32k` to `128k` active context window out of `1M` maximum capacity)  
+**Target Hardware:** Google Kubernetes Engine (GKE) Blackwell (`a4-highgpu-8g` —
+8x NVIDIA B200 HGX per node) \
+**Target Workload:** High-Throughput Enterprise AI Engineering & Autonomous
+Agentic Workflows (`32k` to `128k` active context window out of `1M` maximum
+capacity) \
+**Deployment Scope (`Zonal Baseline → Regional HA Ready`):** By default, the
+entire stack is provisioned with **Zonal scope** (`europe-north1-b` for the GKE
+cluster, Cloud SQL instance, Memorystore Redis cache, and Hyperdisk ML volume)
+to eliminate cross-zone network egress charges and accelerate deployment. The
+deployment can be easily extended to a **Regional HA architecture** by
+configuring `location = var.region` on the GKE cluster, setting
+`availability_type = "REGIONAL"` on Cloud SQL, upgrading Memorystore Redis to
+`tier = "STANDARD_HA"`, and distributing GPU worker replicas (`DP=N`) across
+multiple availability zones behind the internal load balancer.
 
 ---
 
-## ⚡ Executive Summary & Architecture Overview
+## ⚡ Architecture Overview
 
 This repository provides production-ready infrastructure engineering specifications and automated deployment scripts for hosting **GLM-5.2 (~381B total parameters, 47 safetensors shards, ~465 GB on disk)** in a secure, private, and sovereign Google Cloud environment.
 
@@ -45,12 +57,12 @@ To achieve breakthrough economics and sub-second token latency, this architectur
 |  |  - Static Model Footprint: ~500 GB HBM3e         |                 |  - Static Model Footprint: ~500 GB   |  |
 |  |  - Dedicated KV Cache Pool: ~850 GB HBM3e        |                 |  - Dedicated KV Cache Pool: ~850 GB  |  |
 |  |    (~39 Estimated 128k Context Sessions)         |                 |    (~39 Estimated 128k Sessions)     |  |
-|  +--------------------------+-----------------------+                 +------------------+-------------------+  |
-+-----------------------------|------------------------------------------------------------|----------------------+
-                              |                                                            |
-                              +-----------------------------+------------------------------+
-                                                            | (Concurrent ReadOnlyMany Attach)
-                                                            v
+|  +------------------------+-------------------------+                 +------------------+-------------------+  |
++---------------------------|--------------------------------------------------------------|----------------------+
+                            |                                                              |
+                            +------------------------------+-------------------------------+
+                                                           | (Concurrent ReadOnlyMany Attach)
+                                                           v
 +-----------------------------------------------------------------------------------------------------------------+
 |                                   Tier 0: Hyperdisk ML (`ROX` Multi-Node Storage)                               |
 |                             `1,000 GB` Pre-Hydrated Shared Model Weight Volume (XFS)                            |
@@ -72,19 +84,19 @@ GLM-5.2 is designed for high-concurrency enterprise inferencing:
 
 ## ☁️ Google Cloud Products & Architectural Roles
 
-| Google Cloud Product | Resource Identifier in Stack | Architectural Role & Implementation Details |
-| :--- | :--- | :--- |
-| **Google Kubernetes Engine (GKE)** | `module.cluster` | Private nodes with public, IAM-gated control-plane endpoint (or fully private with `enable_private_endpoint = true`) orchestrating vLLM serving pods, Workload Identity Federation, and node pool autoscaling. |
-| **Compute Engine A4 VMs** | `module.node_pool_spot` | `a4-highgpu-8g` Blackwell instances equipped with 8x NVIDIA B200 GPUs (1,440 GB HBM3e) and 32x local NVMe SSDs (12 TiB). |
-| **Hyperdisk ML (`ROX`)** | `module.storage` | 1,000 GB high-throughput block volume flipped to `ReadOnlyMany` mode for shared, zero-cold-start weight mounting. |
-| **Cloud Memorystore for Redis** | `module.cache` | In-memory tier for exact-match prompt caching (single-digit-ms in-VPC, <50 ms verified via port-forward) and gateway token-bucket rate limiting (RPM/TPM). |
-| **Cloud SQL for PostgreSQL** | `module.database` | Private database accessed via Cloud SQL Auth Proxy storing virtual API keys, user budgets, and gateway config. |
-| **BigQuery** | `module.audit` | Serverless audit dataset (`glm52_enterprise_audit`) for asynchronous logging of conversation trajectories and token metrics. |
-| **Cloud Storage (GCS)** | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Remote Terraform state versioning and optional high-speed weight hydration backup (estimated multi-GiB/s, hardware dependent). |
-| **Artifact Registry** | `module.storage` | Secure private container registry hosting pinned custom vLLM Blackwell serving images (`vllm-blackwell:v0.25.1`). |
-| **Cloud Build** | `scripts/03_deploy_workloads.sh` | Serverless build pipeline for automated, self-healing image compilation from `docker/Dockerfile`. |
-| **Virtual Private Cloud (VPC)** | `module.network` | Private network topology with Private Services Access (PSA) and IAP SSH restrictions. |
-| **Managed Service for Prometheus (GMP)** | `module.observability` | Native metrics pipeline capturing NVIDIA DCGM GPU metrics (`DCGM_FI_PROF_PIPE_TENSOR_ACTIVE`) and vLLM request metrics. |
+Google Cloud Product               | Scope                                        | Resource Identifier in Stack             | Architectural Role & Implementation Details
+:--------------------------------- | :------------------------------------------: | :--------------------------------------- | :------------------------------------------
+**Google Kubernetes Engine (GKE)** | **Zonal** *(Baseline)* / **Regional** *(HA)* | `module.cluster`                         | Orchestrates the vLLM serving workers and LiteLLM gateway pods. Uses private nodes with an IAM-gated control plane (`europe-north1-b`), Workload Identity Federation (`WIF`), and Dataplane V2 (`eBPF`). Upgradeable to regional HA via `location = var.region`.
+**Compute Engine A4 VMs**          | **Zonal**                                    | `module.node_pool_spot`                  | `a4-highgpu-8g` Blackwell instances (`europe-north1-b`) providing 8× NVIDIA B200 HGX GPUs (`1,440 GB` HBM3e, NVLink 5th Gen `1.8 TB/s`) and 32× local NVMe SSDs (`12 TiB`) for high-throughput MoE inference.
+**Hyperdisk ML (`ROX`)**           | **Zonal**                                    | `module.storage`                         | `1,000 GB` block volume (`europe-north1-b`) flipped to `ReadOnlyMany` (`ROX`) mode. Enables concurrent multi-node weight mounting with zero internet cold-start downloads.
+**Cloud Memorystore for Redis**    | **Zonal** *(Basic)* / **Regional** *(HA)*    | `module.cache`                           | In-memory tier (`europe-north1-b`) providing exact-match prompt caching (`x-litellm-cache-key`, `2.13 ms` hit duration) and gateway token-bucket rate limiting (`RPM` / `TPM`). Upgradeable to regional HA via `tier = "STANDARD_HA"`.
+**Cloud SQL for PostgreSQL**       | **Zonal** *(Default)* / **Regional** *(HA)*  | `module.database`                        | Private PostgreSQL 15 instance (`europe-north1-b`) connected via Private Services Access (`PSA`). Stores virtual API keys, user budgets, and enterprise routing rules. Upgradeable to regional HA via `availability_type = "REGIONAL"`.
+**BigQuery**                       | **Regional**                                 | `module.audit`                           | Serverless analytical dataset (`glm52_enterprise_audit.trajectories` in `europe-north1`) recording asynchronous WIF-authenticated chat completions, prompt/completion token counts, and request metadata.
+**Cloud Storage (GCS)**            | **Regional**                                 | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Regional buckets (`europe-north1`) hosting remote Terraform state locking (`gs://project-glm52-tfstate`) and fast-path pre-staged model shards (`gs://project-glm52-weights-backup/nvfp4`, ~4 GiB/s hydration).
+**Artifact Registry**              | **Regional**                                 | `module.storage`                         | Secure private container registry (`europe-north1`) storing pinned custom vLLM Blackwell serving container images (`vllm-blackwell:v0.25.1`).
+**Cloud Build**                    | **Regional**                                 | `scripts/03_deploy_workloads.sh`         | On-demand serverless container build pipeline compiling the custom vLLM runtime from `docker/Dockerfile`.
+**Virtual Private Cloud (VPC)**    | **Global / Regional**                        | `module.network`                         | Private custom-mode VPC (`roce-net-primary`) with regional subnets (`k8s-pod-net`), Private Services Access peering, and IAP SSH firewall restrictions.
+**Managed Service for Prometheus** | **Regional**                                 | `module.observability`                   | Fully managed Google Cloud Managed Service for Prometheus (`GMP`) scraping DCGM GPU kernels (`DCGM_FI_PROF_PIPE_TENSOR_ACTIVE`) and vLLM request queues.
 
 ---
 
@@ -120,7 +132,7 @@ While **1x `a4-highgpu-8g` node ($TP=8$) serves as the turnkey MVP baseline**, t
 * **Kubernetes Service Load Balancing:** Incoming inference requests to the internal service `glm52-serving-svc` are distributed across all active serving pod replicas.
 * **Shared Redis Cache:** All node replicas communicate with a centralized Cloud Memorystore Redis instance, enabling exact-match cache hits (single-digit-ms in-VPC, <50 ms verified via port-forward) across nodes.
 
-### 4. 🌐 Optional: Multi-NIC Falcon RoCE Network Fabric & Jumbo Frames (MTU 8896)
+### 4. Optional: Multi-NIC Falcon RoCE Network Fabric & Jumbo Frames (MTU 8896)
 
 #### Why RoCE / Multi-NIC is NOT Required for Single-Node Serving
 
@@ -141,7 +153,7 @@ If extending this codebase to multi-node distributed training or serving ultra-l
 
 ---
 
-### 4. Mathematical Capacity Derivations
+### 5. Capacity Derivations
 
 For a cluster scaled out to $N$ active `a4-highgpu-8g` nodes ($DP=N$, $TP=8$):
 
@@ -258,23 +270,29 @@ nano scripts/config.env
 ```
 
 #### 🛡️ Mandatory IAM Prerequisites
-Running the full lifecycle runbook (infrastructure provisioning, GKE ClusterRole bindings, WIF, and BigQuery audit streaming) requires the following IAM roles on the operator identity:
 
-* `roles/container.admin` (or `roles/container.clusterAdmin`): Required for creating GKE ClusterRole/ClusterRoleBindings in `03_deploy_workloads.sh`.
-* `roles/servicenetworking.networksAdmin`: Required for Cloud SQL private IP to establish a Private Services Access VPC peering in `02_deploy_infra.sh`.
-* `roles/iam.serviceAccountUser`: Required for attaching Workload Identity service accounts to GKE pods.
-* `roles/resourcemanager.projectIamAdmin` (or `roles/editor`): Required for applying IAM policy bindings in Terraform and scripts.
+Running the full lifecycle runbook requires four mandatory IAM roles on your
+active deploy identity (`gcloud config get-value account`).
+`./scripts/01_setup_and_check.sh` automatically verifies all four roles before
+deployment and halts with copy-paste remediation commands if any role is
+missing:
 
-To grant the required permissions:
+Required IAM Role                       | Scope / Purpose                                                                                       | Automated Verification by Script
+:-------------------------------------- | :---------------------------------------------------------------------------------------------------- | :-------------------------------
+`roles/container.admin`                 | Provision GKE clusters, node pools, and RBAC ClusterRoleBindings (`03_deploy_workloads.sh`)           | Verified in Step 6 of `01_setup_and_check.sh`
+`roles/servicenetworking.networksAdmin` | Establish Private Services Access (`PSA`) VPC peering for Cloud SQL private IP (`02_deploy_infra.sh`) | Verified in Step 6 of `01_setup_and_check.sh`
+`roles/iam.serviceAccountUser`          | Attach Workload Identity service accounts to serving and gateway pods                                 | Verified in Step 6 of `01_setup_and_check.sh`
+`roles/resourcemanager.projectIamAdmin` | Bind project-level IAM policies across WIF service accounts and buckets                               | Verified in Step 6 of `01_setup_and_check.sh`
+
+To grant all four required permissions to your deploy identity at once:
 
 ```bash
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-  --member="user:$(gcloud config get-value account)" \
-  --role="roles/container.admin"
-
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-  --member="user:$(gcloud config get-value account)" \
-  --role="roles/servicenetworking.networksAdmin" --condition=None
+for role in roles/container.admin roles/servicenetworking.networksAdmin roles/iam.serviceAccountUser roles/resourcemanager.projectIamAdmin; do
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="user:$(gcloud config get-value account)" \
+    --role="${role}" \
+    --condition=None
+done
 ```
 
 ### Step 3: Run Preflight Checks & Synchronize Configuration
@@ -325,6 +343,20 @@ For quick smoke tests from your local workstation via automatic port-forward:
 ```
 *Note: Benchmark scripts detect port-forward tunnel drops (HTTP 000) and fail fast with actionable guidance to switch to `--in-cluster` mode.*
 
+#### 🔬 Direct Engine Saturation Sweep & Prefill Benchmarking (Phase 4)
+
+To run cache-bypassed direct GPU generation saturation sweeps across concurrency
+levels ($c \in \{1, 8, 16, 32, 64\}$) or evaluate prompt prefill ingestion rate
+on 8x B200 HGX GPUs:
+
+```bash
+# 1. Run prompt prefill / ingestion benchmark (8,192 input tokens -> 16 output tokens)
+python3 benchmarks/run_prefill_benchmark.py
+
+# 2. Run direct vLLM engine saturation sweep (max_tokens=256, ignore_eos=True, 0% cache hits)
+python3 benchmarks/run_saturation_sweep.py
+```
+
 ---
 
 ## 📈 Scaling, HPA & Cost/Latency Trade-Offs
@@ -341,37 +373,35 @@ Automated pod autoscaling is enabled by setting `ENABLE_HPA="true"` in `scripts/
 * **Metric:** `prometheus.googleapis.com|vllm:num_requests_waiting|gauge` (Target: 16 waiting requests)
 * **Metric:** `prometheus.googleapis.com|vllm:num_requests_running|gauge` (Target: 20 running requests)
 
---------------------------------------------------------------------------------
-
-### Phase 4 Direct Engine Saturation Sweep & Prefill Benchmarking
-
-To run cache-bypassed direct GPU generation saturation sweeps across concurrency
-levels ($c \in \{1, 8, 16, 32, 64\}$) or evaluate prompt prefill ingestion rate
-on 8x B200 HGX GPUs:
-
-```bash
-# 1. Run prompt prefill / ingestion benchmark (8,192 input tokens -> 16 output tokens)
-python3 benchmarks/run_prefill_benchmark.py
-
-# 2. Run direct vLLM engine saturation sweep (max_tokens=256, ignore_eos=True, 0% cache hits)
-python3 benchmarks/run_saturation_sweep.py
-```
-
 ---
 
 ## 📦 Weight Cache Lifecycle
 
-### Purpose & Storage Cost
-A GCS weight cache bucket (`gs://<project>-glm52-weights-backup/nvfp4`) holds pre-converted safetensors shards (~433 GiB) for `nvidia/GLM-5.2-NVFP4`. Hydrating Hyperdisk ML from GCS takes **~2 minutes at ~4 GiB/s**, bypassing the ~10-minute Hugging Face Xet download. Storage costs ~$9–10/month and is intentionally kept outside Terraform state (`terraform/modules/storage/main.tf` does not manage it).
+### Purpose & Existing GCS / Hugging Face "Copy to Bucket" Integration
+
+If your organization already hosts GLM-5.2 weights in Google Cloud Storage, or
+if you use Hugging Face's built-in **"Copy to Bucket"** transfer feature to
+export model shards directly from the Hugging Face Hub into a Google Cloud
+Storage bucket, you can provide your existing GCS path directly via
+`GCS_WEIGHTS_BUCKET="gs://your-bucket-name/nvfp4"`.
+
+*   **Instant Multi-Node Hydration:** When `GCS_WEIGHTS_BUCKET` is configured,
+    `./scripts/03_deploy_workloads.sh` bypasses Hugging Face internet downloads
+    entirely and hydrates the local `READ_ONLY_MANY` (`ROX`) Hyperdisk ML volume
+    directly from GCS inside your VPC at **~4 GiB/s (~2 minutes)**.
+*   **Decoupled Lifecycle:** The GCS weight cache bucket
+    (`gs://<project>-glm52-weights-backup/nvfp4`) is intentionally managed
+    outside Terraform state so that running `terraform destroy` never deletes
+    pre-staged model weights (~$9–10/month storage cost).
 
 ### Seeding & Hydration Commands
 
 ```bash
-# 1. Use an existing GCS weight cache during deploy
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-glm52-weights-backup/nvfp4"
+# 1. Provide existing GCS weights path (or bucket populated via Hugging Face "Copy to Bucket")
+export GCS_WEIGHTS_BUCKET="gs://YOUR_BUCKET_NAME/nvfp4"
 ./scripts/03_deploy_workloads.sh
 
-# 2. Seed the GCS cache automatically after a fresh Hugging Face download
+# 2. Seed a new GCS cache automatically after a fresh Hugging Face download
 export POPULATE_WEIGHTS_CACHE="true"
 export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-glm52-weights-backup/nvfp4"
 ./scripts/03_deploy_workloads.sh
@@ -415,17 +445,4 @@ gcloud storage rm --recursive "gs://${PROJECT_ID}-glm52-trajectories"
 gcloud storage rm --recursive "gs://${PROJECT_ID}-glm52-weights"
 ```
 
----
-
-## ✅ Teardown Verification Checklist
-
-Before considering a project teardown complete, verify the following:
-
-* [x] **Kubernetes Workloads:** `kubectl get ns llm-serving` returns `NotFound`.
-* [x] **Spot GPU Nodes:** `gcloud compute instances list --filter="name ~ glm-enterprise"` returns 0 instances.
-* [x] **Cloud SQL:** `gcloud sql instances list --filter="name=glm52-gateway-db"` returns 0 instances.
-* [x] **Cloud Memorystore Redis:** `gcloud redis instances list --region=europe-north1` returns 0 instances.
-* [x] **Hyperdisk ML Volume:** `gcloud compute disks list --filter="name=glm-52-weights-rox"` returns 0 disks.
-* [x] **Service Networking Peerings:** `gcloud compute networks peerings list --network=glm-enterprise-fi-primary` returns no active peerings.
-* [x] **GCS Buckets:** Verified or purged `gs://${PROJECT_ID}-glm52-tfstate` and `gs://${PROJECT_ID}-glm52-trajectories`.
 
