@@ -104,32 +104,38 @@ GLM-5.2 is designed for high-concurrency enterprise inferencing:
 While **1x `a4-highgpu-8g` node ($TP=8$) serves as the turnkey MVP baseline**, the serving architecture separates **intra-node model execution** from **inter-node scale-out**, allowing the cluster to scale elastically from $1 \leftrightarrow N$ nodes based on real-time inferencing demand:
 
 ### 1. Zero-Copy Weight Fan-Out (`Hyperdisk ML ROX`)
+
 * **Concurrent Multi-Node Mount:** Model weights are pre-staged onto a single **1,000 GB Hyperdisk ML** volume. After staging completes, the volume access mode is flipped to `READ_ONLY_MANY` (`pvc-glm52-weights-rox`).
 * **Permanent Read-Only Mode:** Note that Hyperdisk ML becomes permanently read-only after flipping to `READ_ONLY_MANY`. Updating weights in the future requires recreating the disk resource (`terraform taint module.storage.google_compute_disk.staging_disk` or delete/re-apply, then re-running staging).
 * **Instantaneous Scale-Out:** When scaling from $1$ to $N$ serving replicas across distinct physical `a4-highgpu-8g` hosts, each new pod attaches to the same pre-hydrated volume. New replicas reach `Ready` state in minutes instead of hours with zero network weight downloads.
 
 ### 2. Elastic Scaling & Operations
+
 * **Manual Scale-Out:** Workload replicas can be adjusted on demand via `kubectl scale deployment/glm52-nvfp4-serving -n llm-serving --replicas=N` up to `gpu_pool_max_nodes` (default 2).
 * **Horizontal Pod Autoscaler (Opt-In):** Automated horizontal pod autoscaling is optional and disabled by default (enabled via `ENABLE_HPA=true`). It scales the serving deployment on the custom vLLM Prometheus metric `vllm:num_requests_running` via the Custom Metrics Stackdriver Adapter (requiring the adapter deployment and the `roles/monitoring.viewer` IAM policy binding configured by `03_deploy_workloads.sh`).
 * **GKE Cluster Autoscaler:** Automatically provisions additional `a4-highgpu-8g` Spot instances up to `gpu_pool_max_nodes` (default 2) when new serving pods are scheduled, and reclaims idle instances when traffic subsides.
 
 ### 3. Traffic Distribution & Centralized Caching
+
 * **Kubernetes Service Load Balancing:** Incoming inference requests to the internal service `glm52-serving-svc` are distributed across all active serving pod replicas.
 * **Shared Redis Cache:** All node replicas communicate with a centralized Cloud Memorystore Redis instance, enabling exact-match cache hits (single-digit-ms in-VPC, <50 ms verified via port-forward) across nodes.
 
 ### 4. 🌐 Optional: Multi-NIC Falcon RoCE Network Fabric & Jumbo Frames (MTU 8896)
 
 #### Why RoCE / Multi-NIC is NOT Required for Single-Node Serving
+
 * **Intra-Node NVLink:** The GLM-5.2 NVFP4 model is loaded onto an `a4-highgpu-8g` node using Tensor Parallelism ($TP=8$). All inter-GPU tensor synchronization (all-reduce, KV cache transfer) occurs over **5th-Gen NVLink / NVSwitch at 1.8 TB/s per GPU** (14.4 TB/s aggregate bidirectional bandwidth) inside the physical HGX B200 board.
 * **Data Parallel Scale-Out ($DP=N$):** Scaling horizontally across nodes creates independent model replicas. Replicas never exchange tensor data; incoming user queries are standard HTTP/gRPC requests routed by the LiteLLM gateway over standard **gVNIC (MTU 1500)**.
 * **GCP MTU Limits:** GCP VPC subnets support MTU 1500 (or max 8896 for A4 secondary interfaces). Standard Ethernet MTU 9000 is not a supported VPC parameter on Google Cloud.
 
 #### How to Enable Multi-NIC RoCE (For Multi-Node TP > 8 or Distributed Training)
 If extending this codebase to multi-node distributed training or serving ultra-large models requiring Multi-Host Tensor Parallelism ($TP > 8$ or $PP > 1$):
+
 1. Enable the Multi-NIC feature flag in `terraform.tfvars`:
-   ```hcl
-   enable_roce_multinic = true
-   ```
+
+    ```hcl
+    enable_roce_multinic = true
+    ```
 2. Uncomment the secondary RoCE network resources in `terraform/modules/network/main.tf` and `terraform/modules/node_pool_spot/main.tf`.
 3. Apply the updated Terraform plan to provision 8 dedicated secondary subnets (`MTU 8896`) and attach them to the B200 Titanium NIC interfaces.
 
@@ -183,6 +189,8 @@ glm-5.2-gcp-enterprise-serving/
 ├── benchmarks/                    # Synthetic load testing and stress benchmark Python suites
 │   ├── benchmark_glm52.py         # Standard enterprise performance benchmark (TTFT, TPOT, Throughput)
 │   ├── massive_benchmark_glm52.py # High-concurrency stress test simulating 20 autonomous agent streams
+│   ├── run_prefill_benchmark.py   # Empirical prompt-ingestion prefill benchmark (8k-in/16-out prompt tok/s)
+│   ├── run_saturation_sweep.py    # Direct vLLM engine saturation sweep across concurrency levels c=1..64
 │   └── soak_benchmark_glm52.py    # 30-minute continuous stability endurance test (1,800 seconds)
 ├── docker/                        # Container definitions for custom serving runtimes
 │   └── Dockerfile                 # Pinned vLLM Blackwell serving container image definition (v0.25.1)
@@ -251,12 +259,14 @@ nano scripts/config.env
 
 #### 🛡️ Mandatory IAM Prerequisites
 Running the full lifecycle runbook (infrastructure provisioning, GKE ClusterRole bindings, WIF, and BigQuery audit streaming) requires the following IAM roles on the operator identity:
+
 * `roles/container.admin` (or `roles/container.clusterAdmin`): Required for creating GKE ClusterRole/ClusterRoleBindings in `03_deploy_workloads.sh`.
 * `roles/servicenetworking.networksAdmin`: Required for Cloud SQL private IP to establish a Private Services Access VPC peering in `02_deploy_infra.sh`.
 * `roles/iam.serviceAccountUser`: Required for attaching Workload Identity service accounts to GKE pods.
 * `roles/resourcemanager.projectIamAdmin` (or `roles/editor`): Required for applying IAM policy bindings in Terraform and scripts.
 
 To grant the required permissions:
+
 ```bash
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
   --member="user:$(gcloud config get-value account)" \
@@ -309,6 +319,7 @@ To evaluate inference latency (`TTFT`, `TPOT`, and `Throughput`), choose the app
 
 #### 🖥️ Workstation Smoke Testing (Quick Verification)
 For quick smoke tests from your local workstation via automatic port-forward:
+
 ```bash
 ./scripts/05_run_benchmarks.sh --mode standard --target gateway
 ```
@@ -319,14 +330,32 @@ For quick smoke tests from your local workstation via automatic port-forward:
 ## 📈 Scaling, HPA & Cost/Latency Trade-Offs
 
 ### Cost vs. Latency Trade-Off Analysis
+
 * **1x `a4-highgpu-8g` Node ($TP=8$ B200):** Serves up to ~3,089 tokens/sec sustained throughput at P50 TTFT ~83ms. Under high concurrency saturation (>20 concurrent streams), queue depth increases, driving TTFT P99 up to ~60s if replicas remain fixed at 1.
 * **Elastic Scale-Out ($DP=N$ Replicas):** Adding a second B200 node doubles aggregate cluster throughput to ~6,178 tok/s and caps TTFT P99 under 200ms.
 * **Server-Side Queue Bounding Knobs:** In `03-vllm-spot-serving.yaml`, vLLM is configured with `--max-num-seqs=64` and `--max-num-batched-tokens=8192` to bound queue-induced tail latency during request bursts.
 
 ### Enabling Horizontal Pod Autoscaling (HPA)
 Automated pod autoscaling is enabled by setting `ENABLE_HPA="true"` in `scripts/config.env`. HPA scales the serving deployment up to `GPU_MAX_NODES` based on custom vLLM queue depth:
+
 * **Metric:** `prometheus.googleapis.com|vllm:num_requests_waiting|gauge` (Target: 16 waiting requests)
 * **Metric:** `prometheus.googleapis.com|vllm:num_requests_running|gauge` (Target: 20 running requests)
+
+--------------------------------------------------------------------------------
+
+### Phase 4 Direct Engine Saturation Sweep & Prefill Benchmarking
+
+To run cache-bypassed direct GPU generation saturation sweeps across concurrency
+levels ($c \in \{1, 8, 16, 32, 64\}$) or evaluate prompt prefill ingestion rate
+on 8x B200 HGX GPUs:
+
+```bash
+# 1. Run prompt prefill / ingestion benchmark (8,192 input tokens -> 16 output tokens)
+python3 benchmarks/run_prefill_benchmark.py
+
+# 2. Run direct vLLM engine saturation sweep (max_tokens=256, ignore_eos=True, 0% cache hits)
+python3 benchmarks/run_saturation_sweep.py
+```
 
 ---
 
@@ -336,6 +365,7 @@ Automated pod autoscaling is enabled by setting `ENABLE_HPA="true"` in `scripts/
 A GCS weight cache bucket (`gs://<project>-glm52-weights-backup/nvfp4`) holds pre-converted safetensors shards (~433 GiB) for `nvidia/GLM-5.2-NVFP4`. Hydrating Hyperdisk ML from GCS takes **~2 minutes at ~4 GiB/s**, bypassing the ~10-minute Hugging Face Xet download. Storage costs ~$9–10/month and is intentionally kept outside Terraform state (`terraform/modules/storage/main.tf` does not manage it).
 
 ### Seeding & Hydration Commands
+
 ```bash
 # 1. Use an existing GCS weight cache during deploy
 export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-glm52-weights-backup/nvfp4"
@@ -367,6 +397,7 @@ When testing is complete, run the teardown script to safely drain Kubernetes wor
 ```
 
 `06_destroy_all.sh` is completely idempotent and self-healing:
+
 1. Proactively deletes Cloud SQL databases (`glm52_gateway`) to release owned database roles before Terraform user deletion (preventing role drop dependency errors).
 2. Sets `deletion_policy = "ABANDON"` on `google_service_networking_connection` and automatically cleans up dangling compute VPC peerings if Google Cloud SDN propagation delay occurs.
 
@@ -389,6 +420,7 @@ gcloud storage rm --recursive "gs://${PROJECT_ID}-glm52-weights"
 ## ✅ Teardown Verification Checklist
 
 Before considering a project teardown complete, verify the following:
+
 * [x] **Kubernetes Workloads:** `kubectl get ns llm-serving` returns `NotFound`.
 * [x] **Spot GPU Nodes:** `gcloud compute instances list --filter="name ~ glm-enterprise"` returns 0 instances.
 * [x] **Cloud SQL:** `gcloud sql instances list --filter="name=glm52-gateway-db"` returns 0 instances.

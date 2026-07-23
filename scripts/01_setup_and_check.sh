@@ -33,7 +33,7 @@ echo "--> 2. Configuring isolated Python virtual environment (.venv) & installin
 VENV_DIR="${PROJECT_ROOT}/.venv"
 if [ ! -d "${VENV_DIR}" ]; then
   echo "    Creating Python virtual environment at ${VENV_DIR}..."
-  python3 -m venv "${VENV_DIR}" 2>/dev/null || true
+  python3 -m venv --system-site-packages "${VENV_DIR}" 2>/dev/null || true
 fi
 
 if [ -f "${VENV_DIR}/bin/python" ]; then
@@ -46,13 +46,16 @@ else
   echo "    [NOTE] Virtual environment creation unavailable. Falling back to system Python."
 fi
 
-echo "    Installing dependencies from ${SCRIPT_DIR}/requirements.txt..."
-if [ -f "${VENV_DIR}/bin/pip" ]; then
-  "${PIP_BIN}" install -r "${SCRIPT_DIR}/requirements.txt" --quiet
+echo "    Checking if required Python dependencies are already installed..."
+if "${PYTHON_BIN}" -c "import google.cloud.bigquery; import google.cloud.storage" 2>/dev/null; then
+  echo "    [OK] Required Python dependencies already present."
 else
-  python3 -m pip install -r "${SCRIPT_DIR}/requirements.txt" --user --break-system-packages --quiet 2>/dev/null || \
-  pip install -r "${SCRIPT_DIR}/requirements.txt" --user --break-system-packages --quiet 2>/dev/null || \
-  pip install -r "${SCRIPT_DIR}/requirements.txt" --quiet 2>/dev/null || true
+  echo "    Installing missing dependencies from ${SCRIPT_DIR}/requirements.txt..."
+  if [ -f "${VENV_DIR}/bin/pip" ]; then
+    "${PIP_BIN}" install -r "${SCRIPT_DIR}/requirements.txt" --quiet
+  else
+    python3 -m pip install -r "${SCRIPT_DIR}/requirements.txt" --user --break-system-packages --quiet
+  fi
 fi
 
 echo "    Verifying critical Python imports (google.cloud.bigquery, google.cloud.storage)..."
@@ -157,11 +160,13 @@ if [ -z "${ACTIVE_ACCOUNT}" ]; then
 fi
 gcloud config set project "${PROJECT_ID}" --quiet
 
-# 6. Check IAM permissions for GKE RBAC and Service Networking VPC peering
-echo "--> 6. Checking operator IAM permissions for GKE cluster, RBAC management, and VPC peering..."
+# 6. Check IAM permissions for GKE RBAC, VPC peering, Workload Identity, and Project IAM administration
+echo "--> 6. Checking deploy identity IAM permissions for GKE cluster, RBAC, VPC peering, and Workload Identity..."
 if [ -n "${ACTIVE_ACCOUNT}" ]; then
   export HAS_CONTAINER_ADMIN="false"
   export HAS_SN_ADMIN="false"
+  export HAS_SA_USER="false"
+  export HAS_IAM_ADMIN="false"
   IAM_ROLES=$(gcloud projects get-iam-policy "${PROJECT_ID}" \
       --flatten="bindings[].members" \
       --filter="bindings.members:${ACTIVE_ACCOUNT}" \
@@ -171,7 +176,7 @@ if [ -n "${ACTIVE_ACCOUNT}" ]; then
     MEMBER_PREFIX="serviceAccount"
   fi
 
-  if echo "${IAM_ROLES}" | grep -E -q "roles/container.admin|roles/container.clusterAdmin|roles/owner"; then
+  if echo "${IAM_ROLES}" | grep -E -q "roles/container\.admin|roles/container\.clusterAdmin|roles/owner"; then
     export HAS_CONTAINER_ADMIN="true"
     echo "    [OK] Verified GKE admin IAM role for ${ACTIVE_ACCOUNT}."
   else
@@ -180,10 +185,10 @@ if [ -n "${ACTIVE_ACCOUNT}" ]; then
     echo "To grant the required permission, run:"
     echo "    gcloud projects add-iam-policy-binding ${PROJECT_ID} \\"
     echo "      --member=\"${MEMBER_PREFIX}:${ACTIVE_ACCOUNT}\" \\"
-    echo "      --role=\"roles/container.admin\""
+    echo "      --role=\"roles/container.admin\" --condition=None"
   fi
 
-  if echo "${IAM_ROLES}" | grep -E -q "roles/servicenetworking.networksAdmin|roles/owner"; then
+  if echo "${IAM_ROLES}" | grep -E -q "roles/servicenetworking\.networksAdmin|roles/owner"; then
     export HAS_SN_ADMIN="true"
     echo "    [OK] Verified Service Networking networks admin IAM role for ${ACTIVE_ACCOUNT}."
   else
@@ -194,6 +199,31 @@ if [ -n "${ACTIVE_ACCOUNT}" ]; then
     echo "      --member=\"${MEMBER_PREFIX}:${ACTIVE_ACCOUNT}\" \\"
     echo "      --role=\"roles/servicenetworking.networksAdmin\" --condition=None"
   fi
+
+  if echo "${IAM_ROLES}" | grep -E -q "roles/iam\.serviceAccountUser|roles/editor|roles/owner"; then
+    export HAS_SA_USER="true"
+    echo "    [OK] Verified Service Account User IAM role for ${ACTIVE_ACCOUNT}."
+  else
+    echo "WARNING: Active account ${ACTIVE_ACCOUNT} appears to lack 'roles/iam.serviceAccountUser'."
+    echo "Attaching Workload Identity service accounts to GKE pods requires Service Account User privileges."
+    echo "To grant the required permission, run:"
+    echo "    gcloud projects add-iam-policy-binding ${PROJECT_ID} \\"
+    echo "      --member=\"${MEMBER_PREFIX}:${ACTIVE_ACCOUNT}\" \\"
+    echo "      --role=\"roles/iam.serviceAccountUser\" --condition=None"
+  fi
+
+  if echo "${IAM_ROLES}" | grep -E -q "roles/resourcemanager\.projectIamAdmin|roles/owner"; then
+    export HAS_IAM_ADMIN="true"
+    echo "    [OK] Verified Project IAM Admin role for ${ACTIVE_ACCOUNT}."
+  else
+    echo "WARNING: Active account ${ACTIVE_ACCOUNT} appears to lack 'roles/resourcemanager.projectIamAdmin'."
+    echo "Creating Workload Identity IAM bindings in Terraform requires Project IAM Admin privileges."
+    echo "To grant the required permission, run:"
+    echo "    gcloud projects add-iam-policy-binding ${PROJECT_ID} \\"
+    echo "      --member=\"${MEMBER_PREFIX}:${ACTIVE_ACCOUNT}\" \\"
+    echo "      --role=\"roles/resourcemanager.projectIamAdmin\" --condition=None"
+  fi
+
 fi
 
 # 7. Enable required Google Cloud APIs
