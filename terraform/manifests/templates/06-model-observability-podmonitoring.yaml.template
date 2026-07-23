@@ -1,0 +1,21 @@
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: glm52-vllm-podmonitoring
+  namespace: llm-serving
+  labels:
+    app: glm52-serving
+    app.kubernetes.io/name: vllm
+    app.kubernetes.io/part-of: google-cloud-managed-prometheus
+    ai.gke.io/model: "glm-5.2-moe"
+    ai.gke.io/inference-server: "vllm"
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  selector:
+    matchLabels:
+      app: glm52-serving
+  endpoints:
+  - port: 8000
+    path: /metrics
+    interval: 15s

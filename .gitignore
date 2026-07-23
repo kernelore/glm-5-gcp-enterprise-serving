@@ -1,0 +1,51 @@
+# Local .terraform directories and cache
+**/.terraform/*
+.terraform/
+.terraform.lock.hcl
+
+# Local terraform state files (State is now stored remotely in GCS)
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude local .tfvars overrides containing project-specific variables or secrets
+*.tfvars
+*.tfvars.json
+
+# Ignore override files used for local testing
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+
+# Dynamically generated Kubernetes manifests and local environment config
+terraform/manifests/generated/*
+scripts/config.env
+*.log
+*.tmp
+.*.yaml.*
+
+# Binary downloads and archives
+kubeconform
+kubeconform-linux-amd64.tar.gz
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+
+# Exclude Mercurial ignore and markdown files (except README.md)
+.hgignore
+*.md
+!README.md
+.*md
+.*.md
+.*.md.*
+.*md*
+

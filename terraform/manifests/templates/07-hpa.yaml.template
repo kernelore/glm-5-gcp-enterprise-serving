@@ -1,0 +1,32 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: glm52-serving-hpa
+  namespace: llm-serving
+  labels:
+    app: glm52-serving
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: glm52-nvfp4-serving
+  minReplicas: 1
+  maxReplicas: ${GPU_MAX_NODES}
+  metrics:
+  - type: Pods
+    pods:
+      metric:
+        name: prometheus.googleapis.com|vllm:num_requests_waiting|gauge
+      target:
+        type: AverageValue
+        averageValue: "16"
+  - type: Pods
+    pods:
+      metric:
+        name: prometheus.googleapis.com|vllm:num_requests_running|gauge
+      target:
+        type: AverageValue
+        averageValue: "20"
+

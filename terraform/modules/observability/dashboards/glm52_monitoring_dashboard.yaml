@@ -1,0 +1,138 @@
+displayName: "GLM-5.2 Blackwell & vLLM Production Observability (Hamina europe-north1)"
+gridLayout:
+  columns: 2
+  widgets:
+  - title: "NVIDIA Blackwell B200 GPU Utilization (%)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="kubernetes.io/container/accelerator/duty_cycle" AND resource.type="k8s_container"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+  - title: "GPU HBM3e Memory Used vs Total (Bytes)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="kubernetes.io/container/accelerator/memory_used" AND resource.type="k8s_container"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Used - ${resource.labels.pod_name}"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="kubernetes.io/container/accelerator/memory_total" AND resource.type="k8s_container"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Total - ${resource.labels.pod_name}"
+  - title: "TensorCore & Memory Bandwidth Utilization (%)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/DCGM_FI_PROF_PIPE_TENSOR_ACTIVE/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "TensorCore Active"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/DCGM_FI_PROF_DRAM_ACTIVE/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "DRAM Bandwidth Active"
+  - title: "GLM-5.2 PagedAttention KV Cache Saturation (%)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:kv_cache_usage_perc/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+  - title: "vLLM Token Throughput Rate (Tokens/sec)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:generation_tokens_total/counter" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_RATE
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Output Generation Rate (t/s)"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:prompt_tokens_total/counter" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_RATE
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Prompt Prefill Rate (t/s)"
+  - title: "Time-to-First-Token (TTFT Latency Distribution)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:time_to_first_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_99
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "TTFT P99 (s)"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:time_to_first_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_50
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "TTFT P50 (s)"
+  - title: "Time-Per-Output-Token (TPOT Inter-Token Latency)"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:request_time_per_output_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_99
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "TPOT P99 (s)"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:request_time_per_output_token_seconds/histogram" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_PERCENTILE_50
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "TPOT P50 (s)"
+  - title: "Active Concurrency & Queue Length"
+    xyChart:
+      dataSets:
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:num_requests_running/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Running Requests"
+      - timeSeriesQuery:
+          timeSeriesFilter:
+            filter: 'metric.type="prometheus.googleapis.com/vllm:num_requests_waiting/gauge" AND resource.type="prometheus_target"'
+            aggregation:
+              perSeriesAligner: ALIGN_MEAN
+              alignmentPeriod: 60s
+        plotType: LINE
+        legendTemplate: "Waiting in Queue"

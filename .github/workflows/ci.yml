@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init & Validate
+        run: |
+          terraform fmt -check -recursive
+          cd terraform && terraform init -backend=false && terraform validate
+
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck
+        run: shellcheck scripts/*.sh
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Python Compile Check
+        run: python3 -m py_compile scripts/*.py benchmarks/*.py
+
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Kubeconform
+        run: |
+          wget -q https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Render Workload Manifests
+        run: |
+          cp scripts/config.env.example scripts/config.env
+          sed -i 's/export PROJECT_ID="YOUR_PROJECT_ID"/export PROJECT_ID="ci-test"/' scripts/config.env
+          ./scripts/03_deploy_workloads.sh --render-only
+
+      - name: Validate Rendered YAML
+        run: kubeconform -strict -ignore-missing-schemas terraform/manifests/generated/*.yaml

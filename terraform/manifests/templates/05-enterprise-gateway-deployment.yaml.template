@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: glm52-gateway-sa
+  namespace: llm-serving
+  labels:
+    app: glm52-enterprise-gateway
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+  annotations:
+    iam.gke.io/gcp-service-account: glm52-gateway-sa@${PROJECT_ID}.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: glm52-gateway-svc
+  namespace: llm-serving
+  labels:
+    app: glm52-enterprise-gateway
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 4000
+    targetPort: 4000
+    name: http-gateway
+  selector:
+    app: glm52-enterprise-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glm52-enterprise-gateway
+  namespace: llm-serving
+  labels:
+    app: glm52-enterprise-gateway
+    ai.gke.io/model: "glm-5.2-moe"
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: glm52-enterprise-gateway
+  template:
+    metadata:
+      labels:
+        app: glm52-enterprise-gateway
+        ai.gke.io/model: "glm-5.2-moe"
+        env: ${ENV_LABEL}
+        owner: ${OWNER_LABEL}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: glm52-gateway-sa
+      terminationGracePeriodSeconds: 60
+      tolerations:
+      - key: "cloud.google.com/gke-spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        cloud.google.com/gke-nodepool: "np-system-spot"
+        cloud.google.com/gke-spot: "true"
+      containers:
+      - name: gateway
+        image: ghcr.io/berriai/litellm:main-latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - "--config"
+        - "/app/config.yaml"
+        - "--port"
+        - "4000"
+        - "--num_workers"
+        - "2"
+        ports:
+        - name: http-gateway
+          containerPort: 4000
+        envFrom:
+        - secretRef:
+            name: glm52-gateway-secrets
+        env:
+        - name: PYTHONPATH
+          value: "/app"
+        - name: LITELLM_LOG
+          value: "INFO"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+          readOnly: true
+        - name: config-volume
+          mountPath: /app/custom_callbacks.py
+          subPath: custom_callbacks.py
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health/liveliness
+            port: 4000
+          initialDelaySeconds: 120
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+        readinessProbe:
+          httpGet:
+            path: /health/liveliness
+            port: 4000
+          initialDelaySeconds: 45
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 10
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+
+      - name: cloud-sql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+        imagePullPolicy: IfNotPresent
+        args:
+        - "--private-ip"
+        - "--port=5432"
+        - "${DB_CONNECTION_NAME}"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: glm52-gateway-config

@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: glm52-weight-staging-job
+  namespace: llm-serving
+  labels:
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  template:
+    metadata:
+      labels:
+        app: glm52-weight-staging
+    spec:
+      serviceAccountName: glm52-vllm-sa
+      restartPolicy: OnFailure
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-b200
+        cloud.google.com/gke-spot: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: gcs-hydrator
+        image: google/cloud-sdk:slim
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "======================================================================"
+          set -euo pipefail
+          echo "Starting GCS weight hydration to Hyperdisk ML from ${GCS_WEIGHTS_BUCKET}..."
+          mkdir -p /mnt/hyperdisk-ml
+          gcloud storage rsync -r ${GCS_WEIGHTS_BUCKET} /mnt/hyperdisk-ml/
+          echo "Hydration complete."
+        volumeMounts:
+        - name: hyperdisk-ml-weights
+          mountPath: /mnt/hyperdisk-ml
+      volumes:
+      - name: hyperdisk-ml-weights
+        persistentVolumeClaim:
+          claimName: pvc-glm52-weights-staging
+          readOnly: false

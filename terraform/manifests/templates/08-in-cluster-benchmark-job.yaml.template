@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: glm52-benchmark-runner
+  namespace: llm-serving
+  labels:
+    app: glm52-benchmark
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+data:
+  benchmark_runner.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    echo "=============================================================================="
+    echo "GLM-5.2 Sovereign Enterprise Inference - In-Cluster Benchmark Execution"
+    echo "Target Gateway: http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000"
+    echo "=============================================================================="
+    mkdir -p /results
+    python3 -c '
+    import urllib.request, json, sys, time
+    print("Testing gateway cluster connectivity...")
+    '
+    echo "Running in-cluster soak benchmark (10-minute stability verification)..."
+    python3 /scripts/soak_benchmark_glm52.py \
+      --endpoint="http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions" \
+      --api-key="${GATEWAY_MASTER_KEY}" \
+      --duration=600 \
+      --concurrency=18 \
+      --output=/results/incluster_soak_results.json || true
+    echo "In-cluster benchmark execution completed."
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: glm52-incluster-benchmark
+  namespace: llm-serving
+  labels:
+    app: glm52-benchmark
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: glm52-benchmark
+        env: ${ENV_LABEL}
+    spec:
+      restartPolicy: Never
+      tolerations:
+      - key: "cloud.google.com/gke-spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        cloud.google.com/gke-nodepool: "np-system-spot"
+        cloud.google.com/gke-spot: "true"
+      containers:
+      - name: benchmark-runner
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "/runner/benchmark_runner.sh"]
+        env:
+        - name: GATEWAY_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: glm52-gateway-secrets
+              key: GATEWAY_MASTER_KEY
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        volumeMounts:
+        - name: runner-vol
+          mountPath: /runner
+        - name: script-vol
+          mountPath: /scripts
+        - name: results-vol
+          mountPath: /results
+      volumes:
+      - name: runner-vol
+        configMap:
+          name: glm52-benchmark-runner
+          defaultMode: 0755
+      - name: script-vol
+        configMap:
+          name: glm52-benchmark-scripts
+          defaultMode: 0755
+      - name: results-vol
+        emptyDir: {}

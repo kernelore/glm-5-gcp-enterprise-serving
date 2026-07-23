@@ -1,0 +1,4 @@
+# Ignore generated benchmark results and logs
+*.json
+*.log
+results/

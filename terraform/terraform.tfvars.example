@@ -1,0 +1,36 @@
+# ==============================================================================
+# GLM-5.2 Sovereign Enterprise Inference Architecture - Terraform Configuration
+# ==============================================================================
+# INSTRUCTIONS:
+# 1. Copy this example file to create your active variable file:
+#    cp terraform.tfvars.example terraform.tfvars
+# 2. Replace the placeholder values below with your own GCP Project ID, region,
+#    zone, and Mandatory resource compliance labels.
+# ==============================================================================
+
+# Required: Your GCP Project ID where resources will be provisioned
+project_id       = "YOUR_PROJECT_ID"
+
+# GCP Region and Zone for Sovereign Deployment (Hamina, Finland recommended)
+region           = "europe-north1"
+zone             = "europe-north1-b" # Required zone for NVIDIA B200 and RoCE network profile
+
+# GKE Cluster and GPU Node Pool Configuration
+cluster_name            = "glm-enterprise-fi"
+gpu_machine_type        = "a4-highgpu-8g" # 8x NVIDIA B200 HGX per node
+gpu_pool_max_nodes      = 2
+enable_private_endpoint = false
+master_authorized_cidrs = [
+  {
+    cidr_block   = "203.0.113.1/32"
+    display_name = "operator"
+  }
+]
+
+# Mandatory Resource Compliance Labels (ensure strict adherence to prevent cleanup)
+owner_label      = "your-username-glm52" # Lowercase alphanumeric and hyphens only
+ttl_label        = "7d"                    # e.g., 24h, 7d, 14d
+env_label        = "glm52-test"
+
+# Database & Gateway Security Credentials
+db_password      = "REPLACE_WITH_SECURE_PASSWORD" # Required sensitive password for LiteLLM DB

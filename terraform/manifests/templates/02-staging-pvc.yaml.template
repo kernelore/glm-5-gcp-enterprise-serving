@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-glm52-weights-staging
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 1000Gi
+  accessModes:
+    - ReadWriteOnce
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/${PROJECT_ID}/zones/${ZONE}/disks/glm-52-weights-rox
+    fsType: xfs
+    readOnly: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-glm52-weights-staging
+  namespace: llm-serving
+spec:
+  storageClassName: ""
+  volumeName: pv-glm52-weights-staging
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1000Gi
