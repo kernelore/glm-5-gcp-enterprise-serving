@@ -252,6 +252,7 @@ nano scripts/config.env
 #### 🛡️ Mandatory IAM Prerequisites
 Running the full lifecycle runbook (infrastructure provisioning, GKE ClusterRole bindings, WIF, and BigQuery audit streaming) requires the following IAM roles on the operator identity:
 * `roles/container.admin` (or `roles/container.clusterAdmin`): Required for creating GKE ClusterRole/ClusterRoleBindings in `03_deploy_workloads.sh`.
+* `roles/servicenetworking.networksAdmin`: Required for Cloud SQL private IP to establish a Private Services Access VPC peering in `02_deploy_infra.sh`.
 * `roles/iam.serviceAccountUser`: Required for attaching Workload Identity service accounts to GKE pods.
 * `roles/resourcemanager.projectIamAdmin` (or `roles/editor`): Required for applying IAM policy bindings in Terraform and scripts.
 
@@ -260,6 +261,10 @@ To grant the required permissions:
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
   --member="user:$(gcloud config get-value account)" \
   --role="roles/container.admin"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+  --member="user:$(gcloud config get-value account)" \
+  --role="roles/servicenetworking.networksAdmin" --condition=None
 ```
 
 ### Step 3: Run Preflight Checks & Synchronize Configuration
@@ -333,12 +338,12 @@ A GCS weight cache bucket (`gs://<project>-glm52-weights-backup/nvfp4`) holds pr
 ### Seeding & Hydration Commands
 ```bash
 # 1. Use an existing GCS weight cache during deploy
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-glm52-weights-backup"
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-glm52-weights-backup/nvfp4"
 ./scripts/03_deploy_workloads.sh
 
 # 2. Seed the GCS cache automatically after a fresh Hugging Face download
 export POPULATE_WEIGHTS_CACHE="true"
-export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-glm52-weights-backup"
+export GCS_WEIGHTS_BUCKET="gs://YOUR_PROJECT_ID-glm52-weights-backup/nvfp4"
 ./scripts/03_deploy_workloads.sh
 ```
 

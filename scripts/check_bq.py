@@ -26,63 +26,39 @@ success = False
 total_rows = 0
 sample_row = None
 
-# Attempt 1: Google Cloud BigQuery Python Client with sanitized transport
+# Attempt 1: Standard 'bq' CLI query (primary path, resilient to SSL proxy quirks)
 try:
-    from google.cloud import bigquery
-    from google.api_core.client_options import ClientOptions
+    cmd = [
+        "bq", "query",
+        "--nouse_legacy_sql",
+        "--format=json",
+        f"SELECT count(*) as total_trajectories FROM `{table_ref}`"
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if res.returncode == 0:
+        data = json.loads(res.stdout)
+        if data and isinstance(data, list):
+            total_rows = int(data[0].get("total_trajectories", 0))
+        
+        if total_rows > 0:
+            cmd_sample = [
+                "bq", "query",
+                "--nouse_legacy_sql",
+                "--format=json",
+                f"SELECT request_id, request_timestamp, virtual_key, team_id, model, prompt_tokens, completion_tokens, total_cost_usd, ttft_ms, tpot_ms FROM `{table_ref}` ORDER BY request_timestamp DESC LIMIT 1"
+            ]
+            res_sample = subprocess.run(cmd_sample, capture_output=True, text=True, timeout=30)
+            if res_sample.returncode == 0:
+                sample_data = json.loads(res_sample.stdout)
+                if sample_data and isinstance(sample_data, list):
+                    sample_row = sample_data[0]
+        success = True
+    else:
+        print(f"    [NOTE] bq CLI query stderr: {res.stderr.strip()}")
+except Exception as bq_err:
+    print(f"    [NOTE] bq CLI query failed: {bq_err}")
 
-    client_options = ClientOptions()
-    client = bigquery.Client(project=project_id, client_options=client_options)
-    
-    query = f"SELECT count(*) as total_trajectories FROM `{table_ref}`"
-    query_job = client.query(query)
-    results = list(query_job.result())
-    if results:
-        total_rows = results[0].total_trajectories
-    
-    if total_rows > 0:
-        query_sample = f"SELECT request_id, request_timestamp, virtual_key, team_id, model, prompt_tokens, completion_tokens, total_cost_usd, ttft_ms, tpot_ms FROM `{table_ref}` ORDER BY request_timestamp DESC LIMIT 1"
-        sample_res = list(client.query(query_sample).result())
-        if sample_res:
-            sample_row = dict(sample_res[0].items())
-    success = True
-except Exception as py_err:
-    print(f"    [NOTE] Python BigQuery client raised exception ({py_err}). Falling back to 'bq' CLI / REST fallback...")
-
-# Attempt 2: Fallback to `bq` CLI if Python client transport failed
-if not success:
-    try:
-        cmd = [
-            "bq", "query",
-            "--nouse_legacy_sql",
-            "--format=json",
-            f"SELECT count(*) as total_trajectories FROM `{table_ref}`"
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if res.returncode == 0:
-            data = json.loads(res.stdout)
-            if data and isinstance(data, list):
-                total_rows = int(data[0].get("total_trajectories", 0))
-            
-            if total_rows > 0:
-                cmd_sample = [
-                    "bq", "query",
-                    "--nouse_legacy_sql",
-                    "--format=json",
-                    f"SELECT request_id, request_timestamp, virtual_key, team_id, model, prompt_tokens, completion_tokens, total_cost_usd, ttft_ms, tpot_ms FROM `{table_ref}` ORDER BY request_timestamp DESC LIMIT 1"
-                ]
-                res_sample = subprocess.run(cmd_sample, capture_output=True, text=True, timeout=30)
-                if res_sample.returncode == 0:
-                    sample_data = json.loads(res_sample.stdout)
-                    if sample_data and isinstance(sample_data, list):
-                        sample_row = sample_data[0]
-            success = True
-        else:
-            print(f"    [NOTE] bq CLI query stderr: {res.stderr.strip()}")
-    except Exception as bq_err:
-        print(f"    [NOTE] bq CLI query failed: {bq_err}")
-
-# Attempt 3: Direct BigQuery REST API fallback using instance metadata token
+# Attempt 2: Direct BigQuery REST API fallback using instance metadata token
 if not success:
     try:
         token_req = urllib.request.Request(
@@ -103,6 +79,30 @@ if not success:
             success = True
     except Exception as rest_err:
         print(f"    [NOTE] REST API fallback failed: {rest_err}")
+
+# Attempt 3: Google Cloud BigQuery Python Client fallback
+if not success:
+    try:
+        from google.cloud import bigquery
+        from google.api_core.client_options import ClientOptions
+
+        client_options = ClientOptions()
+        client = bigquery.Client(project=project_id, client_options=client_options)
+        
+        query = f"SELECT count(*) as total_trajectories FROM `{table_ref}`"
+        query_job = client.query(query)
+        results = list(query_job.result())
+        if results:
+            total_rows = results[0].total_trajectories
+        
+        if total_rows > 0:
+            query_sample = f"SELECT request_id, request_timestamp, virtual_key, team_id, model, prompt_tokens, completion_tokens, total_cost_usd, ttft_ms, tpot_ms FROM `{table_ref}` ORDER BY request_timestamp DESC LIMIT 1"
+            sample_res = list(client.query(query_sample).result())
+            if sample_res:
+                sample_row = dict(sample_res[0].items())
+        success = True
+    except Exception as py_err:
+        print(f"    [NOTE] Python BigQuery client raised exception ({py_err}).")
 
 if success:
     print(f"    [PASS] BigQuery audit verification succeeded! Total recorded trajectories: {total_rows}")

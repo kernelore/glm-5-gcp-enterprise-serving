@@ -157,14 +157,21 @@ if [ -z "${ACTIVE_ACCOUNT}" ]; then
 fi
 gcloud config set project "${PROJECT_ID}" --quiet
 
-# 6. Check IAM permissions for GKE RBAC (roles/container.admin)
-echo "--> 6. Checking operator IAM permissions for GKE cluster & RBAC management..."
+# 6. Check IAM permissions for GKE RBAC and Service Networking VPC peering
+echo "--> 6. Checking operator IAM permissions for GKE cluster, RBAC management, and VPC peering..."
 if [ -n "${ACTIVE_ACCOUNT}" ]; then
   export HAS_CONTAINER_ADMIN="false"
-  if gcloud projects get-iam-policy "${PROJECT_ID}" \
+  export HAS_SN_ADMIN="false"
+  IAM_ROLES=$(gcloud projects get-iam-policy "${PROJECT_ID}" \
       --flatten="bindings[].members" \
       --filter="bindings.members:${ACTIVE_ACCOUNT}" \
-      --format="value(bindings.role)" 2>/dev/null | grep -E -q "roles/container.admin|roles/container.clusterAdmin|roles/owner"; then
+      --format="value(bindings.role)" 2>/dev/null || true)
+  MEMBER_PREFIX="user"
+  if echo "${ACTIVE_ACCOUNT}" | grep -q "\.gserviceaccount\.com$"; then
+    MEMBER_PREFIX="serviceAccount"
+  fi
+
+  if echo "${IAM_ROLES}" | grep -E -q "roles/container.admin|roles/container.clusterAdmin|roles/owner"; then
     export HAS_CONTAINER_ADMIN="true"
     echo "    [OK] Verified GKE admin IAM role for ${ACTIVE_ACCOUNT}."
   else
@@ -172,8 +179,20 @@ if [ -n "${ACTIVE_ACCOUNT}" ]; then
     echo "Workload deployment (scripts/03_deploy_workloads.sh) requires GKE ClusterRole / RBAC privileges."
     echo "To grant the required permission, run:"
     echo "    gcloud projects add-iam-policy-binding ${PROJECT_ID} \\"
-    echo "      --member=\"user:${ACTIVE_ACCOUNT}\" \\"
+    echo "      --member=\"${MEMBER_PREFIX}:${ACTIVE_ACCOUNT}\" \\"
     echo "      --role=\"roles/container.admin\""
+  fi
+
+  if echo "${IAM_ROLES}" | grep -E -q "roles/servicenetworking.networksAdmin|roles/owner"; then
+    export HAS_SN_ADMIN="true"
+    echo "    [OK] Verified Service Networking networks admin IAM role for ${ACTIVE_ACCOUNT}."
+  else
+    echo "WARNING: Active account ${ACTIVE_ACCOUNT} appears to lack 'roles/servicenetworking.networksAdmin'."
+    echo "Cloud SQL private IP requires establishing a Private Services Access VPC peering in 02_deploy_infra.sh."
+    echo "To grant the required permission, run:"
+    echo "    gcloud projects add-iam-policy-binding ${PROJECT_ID} \\"
+    echo "      --member=\"${MEMBER_PREFIX}:${ACTIVE_ACCOUNT}\" \\"
+    echo "      --role=\"roles/servicenetworking.networksAdmin\" --condition=None"
   fi
 fi
 
