@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument("--max-tokens", type=int, default=128, help="Max generation tokens per request")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature")
     parser.add_argument("--output", default="benchmark_results.json", help="Output JSON path")
+    parser.add_argument("--metadata", default="{}", help="JSON metadata string to embed in output")
     return parser.parse_args()
 
 def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperature, api_key=""):
@@ -69,16 +70,22 @@ def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperat
     tokens_received = 0
     error_msg = None
     has_exact_usage = False
+    chunk_count = 0
+    last_chunk = ""
 
     try:
         with urllib.request.urlopen(req, timeout=120) as response:
             for line in response:
                 line_str = line.decode("utf-8").strip()
                 if not line_str.startswith("data: "):
+                    if line_str and not line_str.startswith(":"):
+                        last_chunk = line_str[:100]
                     continue
                 data_part = line_str[6:].strip()
                 if data_part == "[DONE]":
                     break
+                chunk_count += 1
+                last_chunk = data_part[:100]
                 try:
                     chunk = json.loads(data_part)
                     usage = chunk.get("usage")
@@ -89,10 +96,7 @@ def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperat
                     choices = chunk.get("choices", [])
                     if choices:
                         choice = choices[0]
-                        text = choice.get("text", "")
-                        if not text and isinstance(choice.get("delta"), dict):
-                            text = choice.get("delta", {}).get("content", "")
-                        if text:
+                        if isinstance(choice, dict):
                             now = time.perf_counter()
                             if t_first_token is None:
                                 t_first_token = now
@@ -117,6 +121,8 @@ def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperat
         total_time = t_end - t_start if t_end else 0
         req_throughput = 0
         success = False
+        if not error_msg:
+            error_msg = f"No tok/ttft (tok={tokens_received}, ttft={'set' if t_first_token else 'None'}, chunks={chunk_count}, last={last_chunk})"
 
     return {
         "req_id": req_id,
@@ -230,6 +236,11 @@ def main():
         print(f"TTFT (Time to 1st Token): Mean={summary['metrics']['ttft_ms']['mean']}ms | P50={summary['metrics']['ttft_ms']['p50']}ms | P90={summary['metrics']['ttft_ms']['p90']}ms | P99={summary['metrics']['ttft_ms']['p99']}ms")
         print(f"TPOT (Inter-Token Lat):   Mean={summary['metrics']['tpot_ms']['mean']}ms | P50={summary['metrics']['tpot_ms']['p50']}ms | P90={summary['metrics']['tpot_ms']['p90']}ms | P99={summary['metrics']['tpot_ms']['p99']}ms")
         print("-" * 55)
+
+    try:
+        summary["metadata"] = json.loads(args.metadata) if isinstance(args.metadata, str) else args.metadata
+    except Exception:
+        summary["metadata"] = {}
 
     with open(args.output, "w") as f:
         json.dump(summary, f, indent=2)

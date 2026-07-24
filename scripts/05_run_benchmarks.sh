@@ -45,7 +45,7 @@ Options:
                                    - all:      Run standard, massive, and soak suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
-                                   - serving: Direct vLLM Engine backend (port 8000) bypassing gateway
+                                   - serving: Direct Serving Engine backend (port 8000) bypassing gateway
   --in-cluster                   Run benchmark as an in-cluster Kubernetes Job (Recommended for sustained/soak loads)
   --concurrency <N>              Override concurrency level (optional)
   --requests <N>                 Override total requests count (optional)
@@ -161,6 +161,20 @@ fi
 TARGET_URL="${BASE_URL}${ENDPOINT_PATH}"
 echo "    Target Benchmark Endpoint: ${TARGET_URL}"
 
+ENGINE="${INFERENCE_ENGINE:-vllm}"
+RESULT_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
+mkdir -p "${RESULT_DIR}"
+
+IMAGE=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
+FLAGS=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null || echo "[]")
+RUN_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+if [ "${ENGINE}" = "sglang" ]; then
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c sglang-engine -- python3 -c "import sglang; print(sglang.__version__)" 2>/dev/null || echo "0.5.12-cu130")
+else
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c vllm-engine -- python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "0.25.1")
+fi
+METADATA_JSON=$(python3 -c 'import json, sys; print(json.dumps({"engine": sys.argv[1], "engine_version": sys.argv[2], "image": sys.argv[3], "launch_flags": sys.argv[4], "run_timestamp": sys.argv[5], "runs": 1}))' "${ENGINE}" "${ENGINE_VER}" "${IMAGE}" "${FLAGS}" "${RUN_TS}")
+
 # Check for In-Cluster execution mode
 if [ "${IN_CLUSTER}" = "true" ]; then
   echo ""
@@ -168,27 +182,82 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   echo "--> Executing In-Cluster Benchmark via Kubernetes Job & ConfigMap..."
   echo "------------------------------------------------------------------------------"
   echo "    Creating/Updating benchmark ConfigMap with local test scripts..."
+  mkdir -p "${PROJECT_ROOT}/benchmarks/scratch"
+  echo "${METADATA_JSON}" > "${PROJECT_ROOT}/benchmarks/scratch/metadata.json"
   kubectl create configmap glm52-benchmark-scripts \
     --from-file="${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" \
     --from-file="${PROJECT_ROOT}/benchmarks/massive_benchmark_glm52.py" \
     --from-file="${PROJECT_ROOT}/benchmarks/soak_benchmark_glm52.py" \
-    -n llm-serving --dry-run=client -o yaml | kubectl apply -f -
+    --from-file="${PROJECT_ROOT}/benchmarks/run_saturation_sweep.py" \
+    --from-file="${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" \
+    --from-file="${PROJECT_ROOT}/benchmarks/scratch/metadata.json" \
+    -n llm-serving --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
   echo "    Rendering in-cluster benchmark Job manifest..."
   mkdir -p "${GENERATED_DIR}"
+  if [ "${MODE}" = "standard" ]; then
+    DEF_CONC=8; DEF_REQ=16; DEF_DUR=60
+  elif [ "${MODE}" = "massive" ]; then
+    DEF_CONC=20; DEF_REQ=100; DEF_DUR=300
+  elif [ "${MODE}" = "soak" ]; then
+    DEF_CONC=18; DEF_REQ=100; DEF_DUR=1800
+  else
+    DEF_CONC=8; DEF_REQ=16; DEF_DUR=600
+  fi
   export ENV_LABEL="${ENV_LABEL:-glm52-test}"
   export OWNER_LABEL="${OWNER_LABEL:-opensource-user}"
   export GATEWAY_MASTER_KEY="${GATEWAY_MASTER_KEY:-sk-glm52-master-secret-key-change-me}"
+  export BENCHMARK_MODE="${MODE}"
+  export BENCHMARK_CONCURRENCY="${CONCURRENCY:-$DEF_CONC}"
+  export BENCHMARK_REQUESTS="${REQUESTS:-$DEF_REQ}"
+  export BENCHMARK_DURATION="${DURATION:-$DEF_DUR}"
+  export BENCHMARK_METADATA="${METADATA_JSON}"
   envsubst < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
 
   echo "    Applying in-cluster benchmark Job (${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml)..."
   kubectl delete job glm52-incluster-benchmark -n llm-serving --ignore-not-found=true
-  kubectl apply -f "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
+  kubectl apply --validate=false -f "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
 
-  echo "    Streaming in-cluster benchmark logs (Job: glm52-incluster-benchmark)..."
-  sleep 5
-  kubectl logs -n llm-serving -l app=glm52-benchmark -f --tail=100 || true
-  echo "    [OK] In-cluster benchmark job execution finished."
+  echo "    Waiting for benchmark job pod to schedule and complete execution..."
+  POD_NAME=""
+  for _ in {1..800}; do
+    POD_NAME=$(kubectl get pods -n llm-serving -l app=glm52-benchmark --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
+    if [ -n "${POD_NAME}" ] && [ "${POD_NAME}" != "unknown" ]; then
+      STATUS=$(kubectl exec -n llm-serving "${POD_NAME}" -- ls /results/.done 2>/dev/null || true)
+      if [ "${STATUS}" = "/results/.done" ]; then
+        break
+      fi
+      PHASE=$(kubectl get pod -n llm-serving "${POD_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+      if [ "${PHASE}" = "Succeeded" ] || [ "${PHASE}" = "Failed" ]; then
+        break
+      fi
+    fi
+    sleep 3
+  done
+
+  echo "    Streaming in-cluster benchmark logs (Pod: ${POD_NAME})..."
+  kubectl logs -n llm-serving "${POD_NAME}" --tail=200 || true
+
+  echo "    Copying benchmark results from pod ${POD_NAME}:/results to ${RESULT_DIR}..."
+  if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/standard_results.json" "${RESULT_DIR}/standard_results.json" || echo "WARNING: Could not copy standard_results.json"
+  fi
+  if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/massive_results.json" "${RESULT_DIR}/massive_results.json" || echo "WARNING: Could not copy massive_results.json"
+  fi
+  if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/soak_results.json" "${RESULT_DIR}/soak_results.json" || echo "WARNING: Could not copy soak_results.json"
+  fi
+  if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/saturation_results.json" "${RESULT_DIR}/saturation_results.json" || echo "WARNING: Could not copy saturation_results.json"
+  fi
+  if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/prefill_results.json" "${RESULT_DIR}/prefill_results.json" || echo "WARNING: Could not copy prefill_results.json"
+  fi
+
+  # Signal pod that extraction is complete so it can exit 0 cleanly
+  kubectl exec -n llm-serving "${POD_NAME}" -- touch /results/.extracted 2>/dev/null || true
+  echo "    [OK] In-cluster benchmark job execution finished and results saved to ${RESULT_DIR}."
   exit 0
 fi
 
@@ -198,15 +267,16 @@ if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
   echo "------------------------------------------------------------------------------"
   echo "--> 2. Executing Standard Enterprise Benchmark Suite (concurrency=8, requests=16)..."
   echo "------------------------------------------------------------------------------"
-  
+
   STD_ARGS=(
     "--endpoint=${TARGET_URL}"
-    "--output=${PROJECT_ROOT}/benchmarks/standard_results.json"
+    "--output=${RESULT_DIR}/standard_results.json"
     "--api-key=${DEV_KEY}"
+    "--metadata=${METADATA_JSON}"
   )
   if [ -n "${CONCURRENCY}" ]; then STD_ARGS+=("--concurrency=${CONCURRENCY}"); fi
   if [ -n "${REQUESTS}" ]; then STD_ARGS+=("--requests=${REQUESTS}"); fi
-  
+
   python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${STD_ARGS[@]}" || echo "WARNING: Standard benchmark reported errors or timeouts."
 fi
 
@@ -216,15 +286,16 @@ if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
   echo "------------------------------------------------------------------------------"
   echo "--> 3. Executing Massive Stress Benchmark Suite (concurrency=20, requests=100)..."
   echo "------------------------------------------------------------------------------"
-  
+
   MAS_ARGS=(
     "--endpoint=${TARGET_URL}"
-    "--output=${PROJECT_ROOT}/benchmarks/massive_results.json"
+    "--output=${RESULT_DIR}/massive_results.json"
     "--api-key=${DEV_KEY}"
+    "--metadata=${METADATA_JSON}"
   )
   if [ -n "${CONCURRENCY}" ]; then MAS_ARGS+=("--concurrency=${CONCURRENCY}"); fi
   if [ -n "${REQUESTS}" ]; then MAS_ARGS+=("--requests=${REQUESTS}"); fi
-  
+
   python3 "${PROJECT_ROOT}/benchmarks/massive_benchmark_glm52.py" "${MAS_ARGS[@]}" || echo "WARNING: Massive benchmark reported errors or timeouts."
 fi
 
@@ -234,27 +305,60 @@ if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
   echo "------------------------------------------------------------------------------"
   echo "--> 4. Executing Continuous Soak Suite (concurrency=18, duration=1800s)..."
   echo "------------------------------------------------------------------------------"
-  
+
   SOAK_ARGS=(
     "--endpoint=${TARGET_URL}"
-    "--output=${PROJECT_ROOT}/benchmarks/soak_results.json"
+    "--output=${RESULT_DIR}/soak_results.json"
     "--api-key=${DEV_KEY}"
+    "--metadata=${METADATA_JSON}"
   )
   if [ -n "${CONCURRENCY}" ]; then SOAK_ARGS+=("--concurrency=${CONCURRENCY}"); fi
-  
+
   python3 "${PROJECT_ROOT}/benchmarks/soak_benchmark_glm52.py" "${SOAK_ARGS[@]}" || echo "WARNING: Soak benchmark reported errors or timeouts."
 fi
 
-# 6. Display Benchmark Summary
+# 6. Execute Saturation Sweep Suite
+if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  echo "--> 5. Executing Saturation Sweep Suite (concurrency=1,8,16,32,64)..."
+  echo "------------------------------------------------------------------------------"
+
+  SAT_ARGS=(
+    "--endpoint=${TARGET_URL}"
+    "--output=${RESULT_DIR}/saturation_results.json"
+    "--metadata=${METADATA_JSON}"
+  )
+
+  python3 "${PROJECT_ROOT}/benchmarks/run_saturation_sweep.py" "${SAT_ARGS[@]}" || echo "WARNING: Saturation sweep reported errors or timeouts."
+fi
+
+# 7. Execute Prefill Ingestion Benchmark Suite
+if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  echo "--> 6. Executing Prefill Ingestion Suite (8192 prompt tokens in / 16 out)..."
+  echo "------------------------------------------------------------------------------"
+
+  PREF_ARGS=(
+    "--endpoint=${TARGET_URL}"
+    "--output=${RESULT_DIR}/prefill_results.json"
+    "--metadata=${METADATA_JSON}"
+  )
+
+  python3 "${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" "${PREF_ARGS[@]}" || echo "WARNING: Prefill benchmark reported errors or timeouts."
+fi
+
+# 8. Display Benchmark Summary
 echo ""
 echo "=============================================================================="
 echo "Benchmark Execution Summary"
 echo "=============================================================================="
-if [ -f "${PROJECT_ROOT}/benchmarks/standard_results.json" ]; then
-  echo "Standard Suite Results (${PROJECT_ROOT}/benchmarks/standard_results.json):"
+if [ -f "${RESULT_DIR}/standard_results.json" ]; then
+  echo "Standard Suite Results (${RESULT_DIR}/standard_results.json):"
   python3 -c "
 import json
-with open('${PROJECT_ROOT}/benchmarks/standard_results.json') as f:
+with open('${RESULT_DIR}/standard_results.json') as f:
     d = json.load(f)
 succ = d.get('successful_requests') if d.get('successful_requests') is not None else d.get('execution_summary', {}).get('successful_requests', 0)
 tot = d.get('total_requests') if d.get('total_requests') is not None else d.get('execution_summary', {}).get('total_requests', 0)
@@ -268,11 +372,11 @@ print(f'  - Cluster Throughput:  {float(tps):.2f} tokens/sec')
 " 2>/dev/null || true
 fi
 
-if [ -f "${PROJECT_ROOT}/benchmarks/massive_results.json" ]; then
-  echo "Massive Suite Results (${PROJECT_ROOT}/benchmarks/massive_results.json):"
+if [ -f "${RESULT_DIR}/massive_results.json" ]; then
+  echo "Massive Suite Results (${RESULT_DIR}/massive_results.json):"
   python3 -c "
 import json
-with open('${PROJECT_ROOT}/benchmarks/massive_results.json') as f:
+with open('${RESULT_DIR}/massive_results.json') as f:
     d = json.load(f)
 succ = d.get('successful_requests') if d.get('successful_requests') is not None else d.get('execution_summary', {}).get('successful_requests', 0)
 tot = d.get('total_requests') if d.get('total_requests') is not None else d.get('execution_summary', {}).get('total_requests', 0)
@@ -286,11 +390,11 @@ print(f'  - Cluster Throughput:  {float(tps):.2f} tokens/sec')
 " 2>/dev/null || true
 fi
 
-if [ -f "${PROJECT_ROOT}/benchmarks/soak_results.json" ]; then
-  echo "Soak Suite Results (${PROJECT_ROOT}/benchmarks/soak_results.json):"
+if [ -f "${RESULT_DIR}/soak_results.json" ]; then
+  echo "Soak Suite Results (${RESULT_DIR}/soak_results.json):"
   python3 -c "
 import json
-with open('${PROJECT_ROOT}/benchmarks/soak_results.json') as f:
+with open('${RESULT_DIR}/soak_results.json') as f:
     d = json.load(f)
 completed = d.get('total_completed') if d.get('total_completed') is not None else d.get('successful_requests', d.get('execution_summary', {}).get('total_requests_completed', 0))
 ttft = d.get('ttft_mean_ms') if d.get('ttft_mean_ms') is not None else d.get('metrics', {}).get('ttft_ms', {}).get('mean', 0.0)

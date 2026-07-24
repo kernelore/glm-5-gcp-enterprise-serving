@@ -20,6 +20,9 @@ fi
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
+INFERENCE_ENGINE="${INFERENCE_ENGINE:-vllm}"
+ENGINE_CONTAINER="${INFERENCE_ENGINE}-engine"
+
 : "${PROJECT_ROOT}"
 
 PF_PIDS=()
@@ -56,36 +59,36 @@ if kubectl get job glm52-weight-staging-job -n llm-serving >/dev/null 2>&1; then
   kubectl describe job glm52-weight-staging-job -n llm-serving | grep -E "Pods Statuses|Conditions" || true
 fi
 
-# 5. Check vLLM serving engine health (if pod is running)
-echo "--> 5. Checking vLLM serving pod health status..."
-VLLM_POD=$(kubectl get pod -n llm-serving -l app=glm52-serving -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-VLLM_VIP=$(kubectl get svc glm52-serving-svc -n llm-serving -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "glm52-serving-svc.llm-serving.svc.cluster.local")
+# 5. Check serving engine health (if pod is running)
+echo "--> 5. Checking ${INFERENCE_ENGINE} serving pod health status..."
+SERVING_POD=$(kubectl get pod -n llm-serving -l app=glm52-serving -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+SERVING_VIP=$(kubectl get svc glm52-serving-svc -n llm-serving -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "glm52-serving-svc.llm-serving.svc.cluster.local")
 
-if [ -n "${VLLM_POD}" ]; then
-  POD_STATUS=$(kubectl get pod "${VLLM_POD}" -n llm-serving -o jsonpath='{.status.phase}')
-  echo "    Serving Pod Name:   ${VLLM_POD}"
+if [ -n "${SERVING_POD}" ]; then
+  POD_STATUS=$(kubectl get pod "${SERVING_POD}" -n llm-serving -o jsonpath='{.status.phase}')
+  echo "    Serving Pod Name:   ${SERVING_POD}"
   echo "    Serving Pod Status: ${POD_STATUS}"
 
   if [ "${POD_STATUS}" = "Running" ]; then
-    echo "    Testing vLLM serving health endpoint..."
-    if ! curl -s --connect-timeout 2 "http://${VLLM_VIP}:8000/health" >/dev/null 2>&1 && ! curl -s --connect-timeout 2 "http://localhost:8000/health" >/dev/null 2>&1; then
-      echo "    --> Establishing background kubectl port-forward for vLLM serving (8000:8000)..."
+    echo "    Testing ${INFERENCE_ENGINE} serving health endpoint..."
+    if ! curl -s --connect-timeout 2 "http://${SERVING_VIP}:8000/health" >/dev/null 2>&1 && ! curl -s --connect-timeout 2 "http://localhost:8000/health" >/dev/null 2>&1; then
+      echo "    --> Establishing background kubectl port-forward for serving (8000:8000)..."
       kubectl port-forward -n llm-serving svc/glm52-serving-svc 8000:8000 >/dev/null 2>&1 &
       PF_PIDS+=($!)
       sleep 3
     fi
-    if curl -s --max-time 5 http://localhost:8000/health >/dev/null 2>&1 || curl -s --max-time 5 "http://${VLLM_VIP}:8000/health" >/dev/null 2>&1; then
-      echo "      [PASS] vLLM /health endpoint returned HTTP 200."
+    if curl -s --max-time 5 http://localhost:8000/health >/dev/null 2>&1 || curl -s --max-time 5 "http://${SERVING_VIP}:8000/health" >/dev/null 2>&1; then
+      echo "      [PASS] ${INFERENCE_ENGINE} /health endpoint returned HTTP 200."
     else
       echo "    Testing local /health endpoint inside pod..."
-      kubectl exec -n llm-serving "${VLLM_POD}" -c vllm-engine -- curl -s --max-time 5 http://localhost:8000/health || echo "    WARNING: /health check returned non-200 or is still warming up."
+      kubectl exec -n llm-serving "${SERVING_POD}" -c "${ENGINE_CONTAINER}" -- curl -s --max-time 5 http://localhost:8000/health || echo "    WARNING: /health check returned non-200 or is still warming up."
     fi
   else
     echo "    NOTE: Pod is not yet in Running state (${POD_STATUS}). Check logs with:"
-    echo "          kubectl logs -n llm-serving ${VLLM_POD} -c vllm-engine"
+    echo "          kubectl logs -n llm-serving ${SERVING_POD} -c ${ENGINE_CONTAINER}"
   fi
 else
-  echo "    NOTE: No active vLLM serving pod found (Deployment may be scaled to 0 or waiting for spot nodes)."
+  echo "    NOTE: No active serving pod found (Deployment may be scaled to 0 or waiting for spot nodes)."
 fi
 
 # 6. Enterprise AI Gateway & Proxy Layer 5-Point Verification Suite
@@ -289,6 +292,6 @@ fi
 
 echo "=============================================================================="
 echo "Verification check complete. To monitor real-time logs:"
-echo "  kubectl logs -n llm-serving -l app=glm52-serving -c vllm-engine -f"
+echo "  kubectl logs -n llm-serving -l app=glm52-serving -c ${ENGINE_CONTAINER} -f"
 echo "  kubectl logs -n llm-serving -l app=glm52-enterprise-gateway -c gateway -f"
 echo "=============================================================================="

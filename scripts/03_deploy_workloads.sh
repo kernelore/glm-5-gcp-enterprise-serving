@@ -111,6 +111,28 @@ DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:glm52-gateway-
 export DB_CONNECTION_NAME
 
 export VLLM_VIP="glm52-serving-svc.llm-serving.svc.cluster.local"
+export SERVING_VIP="${VLLM_VIP}"
+export INFERENCE_ENGINE="${INFERENCE_ENGINE:-vllm}"
+export INFERENCE_SERVER_LABEL="${INFERENCE_ENGINE}"
+if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
+  export HPA_QUEUE_METRIC="sglang_num_queue_reqs|unknown"
+  export HPA_RUNNING_METRIC="sglang_num_running_reqs|unknown"
+  IMAGE_NAME="sglang-blackwell"
+  IMAGE_TAG="v0.5.12-cu130"
+  DOCKERFILE="Dockerfile.sglang"
+else
+  export HPA_QUEUE_METRIC="vllm:num_requests_waiting|gauge"
+  export HPA_RUNNING_METRIC="vllm:num_requests_running|gauge"
+  IMAGE_NAME="vllm-blackwell"
+  IMAGE_TAG="v0.25.1"
+  DOCKERFILE="Dockerfile.vllm"
+fi
+export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/${IMAGE_NAME}:${IMAGE_TAG}"
+export BENCHMARK_MODE="${BENCHMARK_MODE:-soak}"
+export BENCHMARK_CONCURRENCY="${BENCHMARK_CONCURRENCY:-18}"
+export BENCHMARK_REQUESTS="${BENCHMARK_REQUESTS:-16}"
+export BENCHMARK_DURATION="${BENCHMARK_DURATION:-600}"
+export BENCHMARK_METADATA="${BENCHMARK_METADATA:-{\}}"
 
 # 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
@@ -120,7 +142,7 @@ for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
     target_file="${GENERATED_DIR}/${basename}"
     echo "    Rendering ${basename}..."
     # shellcheck disable=SC2016
-    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES}' < "${template_file}" > "${target_file}"
+    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${HPA_QUEUE_METRIC} ${HPA_RUNNING_METRIC} ${SERVING_IMAGE} ${SERVING_VIP} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA}' < "${template_file}" > "${target_file}"
   fi
 done
 echo "    [OK] All manifest templates rendered cleanly."
@@ -130,17 +152,20 @@ if [ "${1:-}" = "--render-only" ]; then
   exit 0
 fi
 
-# 2. Check and self-heal container image in Artifact Registry (seeding via Cloud Build from docker/Dockerfile if missing)
-echo "--> 2. Verifying vLLM container image (${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.25.1) in Artifact Registry..."
+# 2. Check and self-heal container image in Artifact Registry (seeding via Cloud Build if missing)
+echo "--> 2. Verifying ${INFERENCE_ENGINE} container image (${SERVING_IMAGE}) in Artifact Registry..."
 if command -v gcloud >/dev/null 2>&1; then
-  if ! gcloud artifacts docker tags list "${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell" --format="value(tag)" --quiet 2>/dev/null | grep -E -q "^v0\.25\.1$"; then
-    echo "    [INFO] Container image vllm-blackwell:v0.25.1 not found in ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod."
-    echo "    --> Triggering container build via Google Cloud Build from docker/Dockerfile..."
+  if ! gcloud artifacts docker tags list "${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/${IMAGE_NAME}" --format="value(tag)" --quiet 2>/dev/null | grep -E -q "^${IMAGE_TAG//./\\.}$"; then
+    echo "    [INFO] Container image ${IMAGE_NAME}:${IMAGE_TAG} not found in ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod."
+    echo "    --> Triggering container build via Google Cloud Build from docker/${DOCKERFILE}..."
     gcloud services enable cloudbuild.googleapis.com --project="${PROJECT_ID}" --quiet 2>/dev/null || true
-    gcloud builds submit "${PROJECT_ROOT}/docker" --tag "${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.25.1" --project="${PROJECT_ID}" --quiet || true
+    gcloud builds submit "${PROJECT_ROOT}/docker" \
+      --config "${PROJECT_ROOT}/docker/cloudbuild.yaml" \
+      --substitutions "_IMAGE_URI=${SERVING_IMAGE},_DOCKERFILE=${DOCKERFILE}" \
+      --project="${PROJECT_ID}" --quiet || true
     echo "    [OK] Container build step finished."
   else
-    echo "    [OK] Container image vllm-blackwell:v0.25.1 verified in Artifact Registry."
+    echo "    [OK] Container image ${IMAGE_NAME}:${IMAGE_TAG} verified in Artifact Registry."
   fi
 fi
 
@@ -262,9 +287,15 @@ else
   echo "--> 5. Skipping weight staging job as SKIP_WEIGHT_JOB=${SKIP_WEIGHT_JOB} or serving is already active."
 fi
 
-# 5. Apply vLLM Blackwell serving engine deployment
-echo "--> 6. Applying vLLM Blackwell serving engine deployment (${GENERATED_DIR}/03-vllm-spot-serving.yaml)..."
-kubectl apply -f "${GENERATED_DIR}/03-vllm-spot-serving.yaml"
+# 5. Apply selected serving engine deployment
+if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
+  SERVING_MANIFEST="03-sglang-spot-serving.yaml"
+  echo "--> 6. Applying SGLang Blackwell serving engine deployment (${GENERATED_DIR}/${SERVING_MANIFEST})..."
+else
+  SERVING_MANIFEST="03-vllm-spot-serving.yaml"
+  echo "--> 6. Applying vLLM Blackwell serving engine deployment (${GENERATED_DIR}/${SERVING_MANIFEST})..."
+fi
+kubectl apply -f "${GENERATED_DIR}/${SERVING_MANIFEST}"
 
 # 6. Deploy Enterprise AI Gateway & Proxy Layer
 echo "--> 7. Applying Enterprise AI Gateway ConfigMap, Secret, and Deployment..."
@@ -272,13 +303,14 @@ kubectl apply -f "${GENERATED_DIR}/04-enterprise-gateway-config.yaml"
 kubectl apply -f "${GENERATED_DIR}/05-enterprise-gateway-deployment.yaml"
 if [ -f "${GENERATED_DIR}/06-model-observability-podmonitoring.yaml" ]; then
   echo "    Applying GKE AI/ML Model Observability PodMonitoring resource..."
+  kubectl delete podmonitoring -l app=glm52-serving -n llm-serving 2>/dev/null || true
   kubectl apply -f "${GENERATED_DIR}/06-model-observability-podmonitoring.yaml" 2>/dev/null || true
 fi
 
 # 7. Optional HPA & Custom Metrics Stackdriver Adapter
 if [ "${ENABLE_HPA:-false}" = "true" ] || [ "${ENABLE_HPA:-false}" = "1" ]; then
   echo "--> 8. Enabling Horizontal Pod Autoscaler (HPA) and Custom Metrics Stackdriver Adapter..."
-  kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/v0.14.3/custom-metrics-stackdriver-adapter/deploy/production/adapter_new_resource_model.yaml
+  kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/master/custom-metrics-stackdriver-adapter/deploy/production/adapter_new_resource_model.yaml
   if command -v gcloud >/dev/null 2>&1; then
     gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
       --member="serviceAccount:${PROJECT_ID}.svc.id.goog[custom-metrics/custom-metrics-stackdriver-adapter]" \

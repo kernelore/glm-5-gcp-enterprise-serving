@@ -1,0 +1,8 @@
+FROM lmsysorg/sglang:v0.5.12-cu130
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir "huggingface_hub[hf_transfer]>=0.26.0" \
+    && python3 -c "import transformers.configuration_utils as m; f = m.__file__; txt = open(f).read(); txt = txt.replace('ALLOWED_LAYER_TYPES = (', 'ALLOWED_LAYER_TYPES = (\n    \"deepseek_sparse_attention\",'); open(f, 'w').write(txt)" \
+    && python3 -c "import inspect; from transformers.models.auto.configuration_auto import CONFIG_MAPPING; [open(f, 'w').write(txt) for k, v in CONFIG_MAPPING.items() if 'glm' in k or 'dsa' in k for f in [inspect.getfile(v)] for txt in [open(f).read().replace(\"'head_dim': 'qk_rope_head_dim',\", \"\").replace('\"head_dim\": \"qk_rope_head_dim\",', \"\").replace(\"'head_dim': 'qk_rope_head_dim'\", \"\").replace('\"head_dim\": \"qk_rope_head_dim\"', \"\")] if 'qk_rope_head_dim' in open(f).read()]"

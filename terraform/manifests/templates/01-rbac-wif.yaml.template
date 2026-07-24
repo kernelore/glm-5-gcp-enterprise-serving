@@ -80,7 +80,7 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: scaler
-            image: bitnami/kubectl:1.31.0
+            image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
             command: ["kubectl", "scale", "deployment/glm52-nvfp4-serving", "-n", "llm-serving", "--replicas=0"]
 ---
 apiVersion: batch/v1
@@ -104,7 +104,7 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: scaler
-            image: bitnami/kubectl:1.31.0
+            image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
             command: ["kubectl", "scale", "deployment/glm52-nvfp4-serving", "-n", "llm-serving", "--replicas=1"]
 ---
 apiVersion: v1

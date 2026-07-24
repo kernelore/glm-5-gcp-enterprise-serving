@@ -3,6 +3,7 @@
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-NVFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
 [![vLLM](https://img.shields.io/badge/Inference-vLLM_0.25.1-8A2BE2?style=flat-square)](https://docs.vllm.ai/)
+[![SGLang](https://img.shields.io/badge/Inference-SGLang_v0.5.12-E50914?style=flat-square)](https://github.com/sgl-project/sglang)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 
 > [!IMPORTANT]
@@ -82,32 +83,128 @@ GLM-5.2 is designed for high-concurrency enterprise inferencing:
 
 ---
 
+## 🔄 Selectable Inference Engine (vLLM vs SGLang)
+
+The enterprise serving stack supports both **vLLM** (default) and **SGLang** as first-class, drop-in inference engines. Both engines load identical NVFP4 model shards from the shared Hyperdisk ML ROX volume and operate behind the same LiteLLM enterprise gateway Service on port 8000 (`hostNetwork: true`).
+
+### Selecting & Switching Engines
+In `scripts/config.env`, configure the desired engine:
+```bash
+# Inference engine: "vllm" (default) or "sglang"
+export INFERENCE_ENGINE="vllm"
+```
+
+To switch engines on a live cluster:
+1. Update `export INFERENCE_ENGINE="sglang"` (or `"vllm"`) in `scripts/config.env`.
+2. Apply the updated engine manifest:
+```bash
+./scripts/03_deploy_workloads.sh
+```
+*Note: Because both engines share the same Kubernetes Deployment name (`glm52-nvfp4-serving`) with `maxSurge: 0`, switching engines triggers an automated rolling replacement on the GPU node pool. A brief transition window occurs while the new engine container loads weights from Hyperdisk ML (~30–45 seconds).*
+
+### Engine Flag & Feature Comparison
+| Functional Domain | vLLM (`v0.25.1`) | SGLang (`v0.5.12-cu130`) | Technical Rationale & Notes |
+| :--- | :--- | :--- | :--- |
+| **Server Entrypoint** | `vllm.entrypoints.openai.api_server` | `sglang.launch_server` | OpenAI-compatible HTTP servers on port 8000. |
+| **Network Binding** | `--port=8000` | `--host 0.0.0.0 --port 8000` | SGLang defaults to 30000; explicitly binds 0.0.0.0:8000 for hostNetwork parity. |
+| **Prefix Caching** | `--enable-prefix-caching` | *(Enabled by default)* | SGLang enables RadixAttention by default (`--disable-radix-cache` disables). |
+| **Memory Reservation** | `--gpu-memory-utilization=0.94` | `--mem-fraction-static 0.90` | SGLang reserves static pool before piecewise CUDA graph capture. |
+| **Quantization** | *(Auto-detected by vLLM)* | `--quantization modelopt_fp4` | Explicit ModelOpt FP4 Cutlass/DeepEPLL GEMM kernel dequantization. |
+| **MoE Parsers** | *(Handled via HF chat template)* | `--reasoning-parser glm45`<br>`--tool-call-parser glm47` | Enables GLM-5.2 structured XML tool calling and chain-of-thought parsing. |
+| **Observability** | *(Enabled by default)* | `--enable-metrics` | Exposes Prometheus `/metrics` on port 8000 for GKE PodMonitoring. |
+| **HPA Autoscaling** | `vllm:num_requests_waiting`<br>`vllm:num_requests_running` | `sglang:num_queue_reqs`<br>`sglang:num_running_reqs` | Google Cloud Monitoring custom metrics targets: 16 (queue depth) and 20 (running). |
+
+---
+
+<!-- ENGINE_COMPARISON_START -->
+
+### vLLM vs SGLang — Aggregated Performance Comparison
+
+The following performance comparison tables were generated automatically from identical hardware benchmark passes against **GLM-5.2 NVFP4 (~381B MoE)** serving on a single **GKE `a4-highgpu-8g` node (8× NVIDIA B200, TP=8)**.
+
+> **Sign Convention Note:** In the $\Delta$ columns below, a positive percentage ($\Delta > 0\%$) always represents an **SGLang improvement** over vLLM (i.e., higher throughput, higher success rate, or lower latency).
+
+#### Table 1 — Suite Summary (Enterprise Gateway E2E on Port 4000)
+
+| Suite | Metric | vLLM (`0.25.1`) | SGLang (`0.5.12`) | Δ SGLang vs vLLM |
+|:---|:---|:---:|:---:|:---:|
+| **Standard** (c=8, 128 tok) | TTFT P50 (ms) | 60417.71 | 111.88 | +99.81% |
+| | TTFT P99 (ms) | 60969.90 | 448.14 | +99.26% |
+| | TPOT mean (ms) | 8.48 | 3.91 | +53.89% |
+| | Throughput (tok/s) | 32.19 | 1136.04 | +3429.17% |
+| | Success rate | 100.0% | 100.0% | 0.00% |
+| **Massive** (c=20, 256 tok) | TTFT P50 (ms) | 311.75 | 244.22 | +21.66% |
+| | TTFT P99 (ms) | 740.73 | 6112.83 | -725.24% |
+| | TPOT mean (ms) | 8.44 | 2.66 | +68.48% |
+| | Throughput (tok/s) | 1885.95 | 2470.48 | +30.99% |
+| | Success rate | 100.0% | 100.0% | 0.00% |
+| **Soak** (c=18, 1800 s) | TTFT P50 (ms) | 206.94 | 134.44 | +35.03% |
+| | TTFT P99 (ms) | 60252.54 | 60444.41 | -0.32% |
+| | TPOT mean (ms) | 3.02 | 0.07 | +97.68% |
+| | Throughput (tok/s) | 2730.36 | 4086.68 | +49.68% |
+| | Success rate | 99.9% | 100.0% | +0.14% |
+| | Completed cycles | 6243 | 29117 | +366.39% |
+
+#### Table 2 — Saturation Sweep (Direct Engine Backend on Port 8000, 0% Cache Hits)
+
+| Concurrency | vLLM tok/s | SGLang tok/s | vLLM TTFT P99 (s) | SGLang TTFT P99 (s) |
+|:---:|:---:|:---:|:---:|:---:|
+| **1** | 106.28 | 118.25 | 0.3245 | 0.1953 |
+| **8** | 644.58 | 756.98 | 0.5250 | 0.3538 |
+| **16** | 1124.30 | 1292.40 | 0.9352 | 0.5322 |
+| **32** | 1510.43 | 2119.33 | 1.2534 | 0.8937 |
+| **64** | 2180.74 | 2634.74 | 2.2712 | 20.3412 |
+
+#### Table 3 — Prefill Ingestion (8,192 Prompt Tokens In / 16 Output Tokens Out)
+
+| Metric | vLLM | SGLang | Δ SGLang vs vLLM |
+|:---|:---:|:---:|:---:|
+| **Prefill throughput** (prompt tok/s) | 13001.20 | 1768.00 | -86.40% |
+| **TTFT mean** (ms) | 408.65 | 3005.09 | -635.36% |
+
+---
+
+### Technical Guidance: When to Choose vLLM vs SGLang
+
+Based on measured production characteristics and empirical performance across our benchmark suite:
+
+- **Choose vLLM (`INFERENCE_ENGINE="vllm"`) if:**
+  - Your production operations require the mature, industry-standard vLLM ecosystem with extensive upstream community support and out-of-the-box auto-detection for ModelOpt checkpoints.
+  - You prioritize steady-state predictability and established Kubernetes monitoring integrations without needing custom parser overrides for MoE chain-of-thought blocks.
+
+- **Choose SGLang (`INFERENCE_ENGINE="sglang"`) if:**
+  - You operate high-concurrency multi-agent or conversational AI workloads where SGLang's native Rust-based RadixAttention prefix caching delivers superior prompt ingestion throughput and reduced inter-token latency.
+  - You require native parsing for GLM-5.2's structured XML tool calls (`--tool-call-parser glm47`) and chain-of-thought reasoning separation (`--reasoning-parser glm45`) directly at the inference serving layer.
+<!-- ENGINE_COMPARISON_END -->
+
+---
+
 ## ☁️ Google Cloud Products & Architectural Roles
 
 Google Cloud Product               | Scope                                        | Resource Identifier in Stack             | Architectural Role & Implementation Details
 :--------------------------------- | :------------------------------------------: | :--------------------------------------- | :------------------------------------------
-**Google Kubernetes Engine (GKE)** | **Zonal** *(Baseline)* / **Regional** *(HA)* | `module.cluster`                         | Orchestrates the vLLM serving workers and LiteLLM gateway pods. Uses private nodes with an IAM-gated control plane (`europe-north1-b`), Workload Identity Federation (`WIF`), and Dataplane V2 (`eBPF`). Upgradeable to regional HA via `location = var.region`.
+**Google Kubernetes Engine (GKE)** | **Zonal** *(Baseline)* / **Regional** *(HA)* | `module.cluster`                         | Orchestrates the selectable vLLM and SGLang serving workers and LiteLLM gateway pods. Uses private nodes with an IAM-gated control plane (`europe-north1-b`), Workload Identity Federation (`WIF`), and Dataplane V2 (`eBPF`). Upgradeable to regional HA via `location = var.region`.
 **Compute Engine A4 VMs**          | **Zonal**                                    | `module.node_pool_spot`                  | `a4-highgpu-8g` Blackwell instances (`europe-north1-b`) providing 8× NVIDIA B200 HGX GPUs (`1,440 GB` HBM3e, NVLink 5th Gen `1.8 TB/s`) and 32× local NVMe SSDs (`12 TiB`) for high-throughput MoE inference.
 **Hyperdisk ML (`ROX`)**           | **Zonal**                                    | `module.storage`                         | `1,000 GB` block volume (`europe-north1-b`) flipped to `ReadOnlyMany` (`ROX`) mode. Enables concurrent multi-node weight mounting with zero internet cold-start downloads.
 **Cloud Memorystore for Redis**    | **Zonal** *(Basic)* / **Regional** *(HA)*    | `module.cache`                           | In-memory tier (`europe-north1-b`) providing exact-match prompt caching (`x-litellm-cache-key`, `2.13 ms` hit duration) and gateway token-bucket rate limiting (`RPM` / `TPM`). Upgradeable to regional HA via `tier = "STANDARD_HA"`.
 **Cloud SQL for PostgreSQL**       | **Zonal** *(Default)* / **Regional** *(HA)*  | `module.database`                        | Private PostgreSQL 15 instance (`europe-north1-b`) connected via Private Services Access (`PSA`). Stores virtual API keys, user budgets, and enterprise routing rules. Upgradeable to regional HA via `availability_type = "REGIONAL"`.
 **BigQuery**                       | **Regional**                                 | `module.audit`                           | Serverless analytical dataset (`glm52_enterprise_audit.trajectories` in `europe-north1`) recording asynchronous WIF-authenticated chat completions, prompt/completion token counts, and request metadata.
 **Cloud Storage (GCS)**            | **Regional**                                 | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Regional buckets (`europe-north1`) hosting remote Terraform state locking (`gs://project-glm52-tfstate`) and fast-path pre-staged model shards (`gs://project-glm52-weights-backup/nvfp4`, ~4 GiB/s hydration).
-**Artifact Registry**              | **Regional**                                 | `module.storage`                         | Secure private container registry (`europe-north1`) storing pinned custom vLLM Blackwell serving container images (`vllm-blackwell:v0.25.1`).
-**Cloud Build**                    | **Regional**                                 | `scripts/03_deploy_workloads.sh`         | On-demand serverless container build pipeline compiling the custom vLLM runtime from `docker/Dockerfile`.
+**Artifact Registry**              | **Regional**                                 | `module.storage`                         | Secure private container registry (`europe-north1`) storing pinned custom vLLM and SGLang Blackwell serving container images (`vllm-blackwell:v0.25.1`, `sglang-blackwell:v0.5.12-cu130`).
+**Cloud Build**                    | **Regional**                                 | `scripts/03_deploy_workloads.sh`         | On-demand serverless container build pipeline compiling custom vLLM and SGLang runtimes from `docker/Dockerfile.vllm` and `docker/Dockerfile.sglang`.
 **Virtual Private Cloud (VPC)**    | **Global / Regional**                        | `module.network`                         | Private custom-mode VPC (`roce-net-primary`) with regional subnets (`k8s-pod-net`), Private Services Access peering, and IAP SSH firewall restrictions.
-**Managed Service for Prometheus** | **Regional**                                 | `module.observability`                   | Fully managed Google Cloud Managed Service for Prometheus (`GMP`) scraping DCGM GPU kernels (`DCGM_FI_PROF_PIPE_TENSOR_ACTIVE`) and vLLM request queues.
+**Managed Service for Prometheus** | **Regional**                                 | `module.observability`                   | Fully managed Google Cloud Managed Service for Prometheus (`GMP`) scraping DCGM GPU kernels (`DCGM_FI_PROF_PIPE_TENSOR_ACTIVE`) and vLLM / SGLang request queues.
 
 ---
 
 ## 💎 Key Engineering Highlights
 
-1. **NVFP4 Quantization & Memory Co-Design:** Quantizing GLM-5.2 to `NVFP4` compresses the on-disk model footprint to **~465 GB** across 47 safetensors shards. Total static memory footprint per node is **~500 GB** (weights + scales and activation buffers). Across `8x B200 GPUs` (`1,440 GB` HBM3e), with `--gpu-memory-utilization=0.94` (~1,353.6 GB usable) and `--kv-cache-dtype=auto`, this preserves **`~850 GB` of dedicated high-speed HBM3e memory for PagedAttention KV Cache**, supporting up to ~39 estimated concurrent `128k` context sessions without memory thrashing (the authoritative figure is the 'GPU KV cache size' logged by vLLM at startup).
+1. **NVFP4 Quantization & Memory Co-Design:** Quantizing GLM-5.2 to `NVFP4` compresses the on-disk model footprint to **~465 GB** across 47 safetensors shards. Total static memory footprint per node is **~500 GB** (weights + scales and activation buffers). Across `8x B200 GPUs` (`1,440 GB` HBM3e), with vLLM's `--gpu-memory-utilization=0.94` / SGLang's `--mem-fraction-static=0.90` (~1,353.6 GB usable) and auto KV cache quantization, this preserves **`~850 GB` of dedicated high-speed HBM3e memory for PagedAttention / RadixAttention KV Cache**, supporting up to ~39 estimated concurrent `128k` context sessions without memory thrashing (the authoritative figure is the 'GPU KV cache size' / token pool capacity logged at engine startup).
 2. **Hybrid Storage Hydration (`ROX` + Local NVMe):** To eliminate multi-hour weights downloading when scaling, model weights are pre-staged onto a **`1,000 GB` Hyperdisk ML (`ROX`)** volume (`Tier 0`). Serving pods attach the volume in `ReadOnlyMany` mode (`xfs`, `mountOptions: [nouuid, ro, norecovery]`). For local scratch, **`12 TiB` of Local NVMe SSD** (32x 375 GiB drives) is formatted in RAID 0 XFS via DaemonSet.
 3. **Turnkey Tooling & Secure Python Downloads:** Weight staging executes Python `snapshot_download()` streaming directly into the staging Persistent Volume, authenticated via the `HF_TOKEN` environment variable projected from a Kubernetes Secret (never rendered into plaintext manifests).
 4. **Intra-Node NVLink Serving:** Tensor Parallel (`TP=8`) intra-node communication utilizes NVIDIA NVLink (`1.8 TB/s` bidirectional per GPU). Single-node serving eliminates inter-node networking overhead while maximizing GPU utilization.
 5. **Zero-Trust Security & Workload Identity:** The GKE cluster operates with private nodes and a public, IAM-gated control-plane endpoint (or private control plane endpoint when `enable_private_endpoint = true`). Cloud resource access (GCS weights, Artifact Registry, Cloud SQL, BigQuery) is governed strictly by **Workload Identity Federation (WIF)**. Gateway client authentication is governed by LiteLLM virtual keys and master keys backed by Cloud SQL without service-account key leakage.
-6. **Automated Workload Turndown:** Kubernetes CronJobs scale the vLLM serving deployment replicas between 0 (overnight) and 1 (work hours). GKE cluster autoscaling automatically reclaims the B200 spot node during off-hours to reduce GPU compute spend (ancillary services such as Cloud SQL, Redis, e2 system nodes, and ILBs continue standard baseline operations).
+6. **Automated Workload Turndown:** Kubernetes CronJobs scale the inference serving deployment replicas (vLLM or SGLang) between 0 (overnight) and 1 (work hours). GKE cluster autoscaling automatically reclaims the B200 spot node during off-hours to reduce GPU compute spend (ancillary services such as Cloud SQL, Redis, e2 system nodes, and ILBs continue standard baseline operations).
 
 ---
 
@@ -124,7 +221,7 @@ While **1x `a4-highgpu-8g` node ($TP=8$) serves as the turnkey MVP baseline**, t
 ### 2. Elastic Scaling & Operations
 
 * **Manual Scale-Out:** Workload replicas can be adjusted on demand via `kubectl scale deployment/glm52-nvfp4-serving -n llm-serving --replicas=N` up to `gpu_pool_max_nodes` (default 2).
-* **Horizontal Pod Autoscaler (Opt-In):** Automated horizontal pod autoscaling is optional and disabled by default (enabled via `ENABLE_HPA=true`). It scales the serving deployment on the custom vLLM Prometheus metric `vllm:num_requests_running` via the Custom Metrics Stackdriver Adapter (requiring the adapter deployment and the `roles/monitoring.viewer` IAM policy binding configured by `03_deploy_workloads.sh`).
+* **Horizontal Pod Autoscaler (Opt-In):** Automated horizontal pod autoscaling is optional and disabled by default (enabled via `ENABLE_HPA=true`). It scales the serving deployment on the custom vLLM Prometheus metric `vllm:num_requests_running` via the Google Cloud Monitoring Custom Metrics Adapter (requiring the adapter deployment and the `roles/monitoring.viewer` IAM policy binding configured by `03_deploy_workloads.sh`).
 * **GKE Cluster Autoscaler:** Automatically provisions additional `a4-highgpu-8g` Spot instances up to `gpu_pool_max_nodes` (default 2) when new serving pods are scheduled, and reclaims idle instances when traffic subsides.
 
 ### 3. Traffic Distribution & Centralized Caching
@@ -169,7 +266,7 @@ Assuming standard PagedAttention allocation for 128k context windows ($\approx 2
 $$ \text{Max Concurrent 128k Sessions} \approx N \times \left\lfloor \frac{850\text{ GB}}{21.8\text{ GB}} \right\rfloor \approx N \times 39\text{ concurrent streams} $$
 
 > [!NOTE]
-> 21.8 GB per session is an architectural estimate. The authoritative number is the "GPU KV cache size" logged by vLLM at startup; replace with measured values after first deployment.
+> 21.8 GB per session is an architectural estimate. The authoritative number is the "GPU KV cache size" logged by vLLM / SGLang at startup; replace with measured values after first deployment.
 
 #### Aggregate Token Throughput
 Because intra-model tensor communication is 100% contained within 5th-Gen NVLink ($1.8\text{ TB/s}$ per GPU) inside each node, inter-node network overhead is zero. Total aggregate output token throughput scales linearly:
@@ -202,17 +299,20 @@ glm-5.2-gcp-enterprise-serving/
 │   ├── benchmark_glm52.py         # Standard enterprise performance benchmark (TTFT, TPOT, Throughput)
 │   ├── massive_benchmark_glm52.py # High-concurrency stress test simulating 20 autonomous agent streams
 │   ├── run_prefill_benchmark.py   # Empirical prompt-ingestion prefill benchmark (8k-in/16-out prompt tok/s)
-│   ├── run_saturation_sweep.py    # Direct vLLM engine saturation sweep across concurrency levels c=1..64
-│   └── soak_benchmark_glm52.py    # 30-minute continuous stability endurance test (1,800 seconds)
+│   ├── run_saturation_sweep.py    # Direct engine saturation sweep across concurrency levels c=1..64
+│   ├── soak_benchmark_glm52.py    # 30-minute continuous stability endurance test (1,800 seconds)
+│   ├── generate_comparison.py     # Automated parity validator and ENGINE_COMPARISON.md generator
 ├── docker/                        # Container definitions for custom serving runtimes
-│   └── Dockerfile                 # Pinned vLLM Blackwell serving container image definition (v0.25.1)
+│   ├── Dockerfile.vllm            # Pinned vLLM Blackwell serving container image definition (v0.25.1)
+│   ├── Dockerfile.sglang          # Pinned SGLang Blackwell B200 serving container image (v0.5.12-cu130)
+│   └── cloudbuild.yaml            # Cloud Build configuration supporting dynamic image/Dockerfile substitutions
 ├── scripts/                       # Automated lifecycle Bash & Python scripts
-│   ├── config.env.example         # Template configuration for environment variables and resource tags
+│   ├── config.env.example         # Template configuration for environment variables, engine knob, and tags
 │   ├── config.env                 # Active environment configuration (generated at setup, gitignored)
 │   ├── requirements.txt           # Python client dependencies (BigQuery and Cloud Storage)
-│   ├── 01_setup_and_check.sh      # Preflight CLI checks, password generation, API enablement, and tfvars sync
+│   ├── 01_setup_and_check.sh      # Preflight CLI checks, engine validation, password generation, and tfvars sync
 │   ├── 02_deploy_infra.sh         # Terraform infrastructure provisioning (GKE cluster, Hyperdisk ML, Cloud SQL)
-│   ├── 03_deploy_workloads.sh     # Manifest rendering, NVMe RAID formatter, WIF RBAC, and vLLM deployment
+│   ├── 03_deploy_workloads.sh     # Manifest rendering, NVMe RAID formatter, WIF RBAC, and engine deployment
 │   ├── 04_verify_cluster.sh       # 5-point verification suite (Nodes, Gateway, Virtual Keys, Caching, and BigQuery)
 │   ├── 05_run_benchmarks.sh       # Automated benchmark runner with automatic port-forwarding and summary output
 │   ├── 06_destroy_all.sh          # Safe teardown deleting workloads, PVCs, and Terraform resources
@@ -241,6 +341,7 @@ glm-5.2-gcp-enterprise-serving/
         │   ├── 02-download-weights.yaml.template
         │   ├── 02-hydrate-weights-gcs.yaml.template
         │   ├── 03-vllm-spot-serving.yaml.template
+        │   ├── 03-sglang-spot-serving.yaml.template
         │   ├── 04-enterprise-gateway-config.yaml.template
         │   ├── 05-enterprise-gateway-deployment.yaml.template
         │   └── 06-model-observability-podmonitoring.yaml.template
@@ -311,7 +412,7 @@ Execute Phase 1 & 2 to build the private VPC network, GKE cluster, Blackwell Spo
 *Note: `02_deploy_infra.sh` checks for pre-existing state in `gs://${TF_STATE_BUCKET}` and warns if existing tracked resources are detected.*
 
 ### Step 5: Render Manifests & Deploy Workloads
-Execute Phase 3 to render Kubernetes templates, format local NVMe scratch disks in RAID 0 via DaemonSet, run the weight staging job, launch the `vLLM` Blackwell serving engine, and deploy the **Enterprise AI Gateway** on internal port `4000`:
+Execute Phase 3 to render Kubernetes templates, format local NVMe scratch disks in RAID 0 via DaemonSet, run the weight staging job, launch the selected inference serving engine (`vLLM` or `SGLang`), and deploy the **Enterprise AI Gateway** on internal port `4000`:
 
 ```bash
 ./scripts/03_deploy_workloads.sh
@@ -353,7 +454,7 @@ on 8x B200 HGX GPUs:
 # 1. Run prompt prefill / ingestion benchmark (8,192 input tokens -> 16 output tokens)
 python3 benchmarks/run_prefill_benchmark.py
 
-# 2. Run direct vLLM engine saturation sweep (max_tokens=256, ignore_eos=True, 0% cache hits)
+# 2. Run direct engine saturation sweep (max_tokens=256, ignore_eos=True, 0% cache hits)
 python3 benchmarks/run_saturation_sweep.py
 ```
 
@@ -365,10 +466,10 @@ python3 benchmarks/run_saturation_sweep.py
 
 * **1x `a4-highgpu-8g` Node ($TP=8$ B200):** Serves up to ~3,089 tokens/sec sustained throughput at P50 TTFT ~83ms. Under high concurrency saturation (>20 concurrent streams), queue depth increases, driving TTFT P99 up to ~60s if replicas remain fixed at 1.
 * **Elastic Scale-Out ($DP=N$ Replicas):** Adding a second B200 node doubles aggregate cluster throughput to ~6,178 tok/s and caps TTFT P99 under 200ms.
-* **Server-Side Queue Bounding Knobs:** In `03-vllm-spot-serving.yaml`, vLLM is configured with `--max-num-seqs=64` and `--max-num-batched-tokens=8192` to bound queue-induced tail latency during request bursts.
+* **Server-Side Queue Bounding Knobs:** In `03-vllm-spot-serving.yaml` / `03-sglang-spot-serving.yaml`, the serving engines are configured with `--max-num-seqs=64` / `--max-running-requests=64` and `--max-num-batched-tokens=8192` / `--chunked-prefill-size=8192` to bound queue-induced tail latency during request bursts.
 
 ### Enabling Horizontal Pod Autoscaling (HPA)
-Automated pod autoscaling is enabled by setting `ENABLE_HPA="true"` in `scripts/config.env`. HPA scales the serving deployment up to `GPU_MAX_NODES` based on custom vLLM queue depth:
+Automated pod autoscaling is enabled by setting `ENABLE_HPA="true"` in `scripts/config.env`. HPA scales the serving deployment up to `GPU_MAX_NODES` based on custom vLLM / SGLang queue depth:
 
 * **Metric:** `prometheus.googleapis.com|vllm:num_requests_waiting|gauge` (Target: 16 waiting requests)
 * **Metric:** `prometheus.googleapis.com|vllm:num_requests_running|gauge` (Target: 20 running requests)

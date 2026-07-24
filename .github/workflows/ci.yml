@@ -60,6 +60,9 @@ jobs:
   manifests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      matrix:
+        engine: [vllm, sglang]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -71,9 +74,12 @@ jobs:
           sudo mv kubeconform /usr/local/bin/
 
       - name: Render Workload Manifests
+        env:
+          INFERENCE_ENGINE: ${{ matrix.engine }}
         run: |
           cp scripts/config.env.example scripts/config.env
           sed -i 's/export PROJECT_ID="YOUR_PROJECT_ID"/export PROJECT_ID="ci-test"/' scripts/config.env
+          sed -i "s/export INFERENCE_ENGINE=\".*\"/export INFERENCE_ENGINE=\"${INFERENCE_ENGINE}\"/" scripts/config.env || echo "export INFERENCE_ENGINE=\"${INFERENCE_ENGINE}\"" >> scripts/config.env
           ./scripts/03_deploy_workloads.sh --render-only
 
       - name: Validate Rendered YAML

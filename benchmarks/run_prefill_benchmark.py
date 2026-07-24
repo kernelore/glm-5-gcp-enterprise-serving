@@ -6,6 +6,7 @@ Sends an ~8192 token input prompt with max_tokens=16 and measures TTFT and
 prompt throughput.
 """
 
+import argparse
 import json
 import time
 import urllib.request
@@ -21,7 +22,10 @@ SYNTHETIC_8K = (
 
 
 def measure_prefill(
-    endpoint="http://localhost:8000/v1/completions", model="glm-5.2-moe"
+    endpoint="http://localhost:8000/v1/completions",
+    model="glm-5.2-moe",
+    output="benchmarks/prefill_results.json",
+    metadata="{}",
 ):
   payload = {
       "model": model,
@@ -96,10 +100,21 @@ def measure_prefill(
       f"Per-GPU Prefill Rate: {result['prefill_tok_s_per_gpu']:.2f} prompt"
       " tok/s/GPU"
   )
-  with open("benchmarks/prefill_results.json", "w") as f:
+  try:
+    meta = json.loads(metadata) if isinstance(metadata, str) else metadata
+  except Exception:
+    meta = {}
+  result["metadata"] = meta
+  with open(output, "w") as f:
     json.dump(result, f, indent=2)
   return result
 
 
 if __name__ == "__main__":
-  measure_prefill()
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--endpoint", default="http://localhost:8000/v1/completions")
+  parser.add_argument("--model", default="glm-5.2-moe")
+  parser.add_argument("--output", default="benchmarks/prefill_results.json")
+  parser.add_argument("--metadata", default="{}")
+  args = parser.parse_args()
+  measure_prefill(args.endpoint, args.model, args.output, args.metadata)

@@ -75,6 +75,14 @@ fi
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
+# Default to vllm if unset in existing config.env files
+export INFERENCE_ENGINE="${INFERENCE_ENGINE:-vllm}"
+
+if [[ "${INFERENCE_ENGINE}" != "vllm" && "${INFERENCE_ENGINE}" != "sglang" ]]; then
+  echo "ERROR: Invalid INFERENCE_ENGINE '${INFERENCE_ENGINE}'. Must be either 'vllm' or 'sglang'."
+  exit 1
+fi
+
 if [ -z "${PROJECT_ID:-}" ] || [ "${PROJECT_ID}" = "YOUR_PROJECT_ID" ]; then
   echo "ERROR: PROJECT_ID is not properly set in ${CONFIG_FILE}."
   echo "Please edit ${CONFIG_FILE} and set your active GCP Project ID."
@@ -106,6 +114,7 @@ echo "    Active Project ID: ${PROJECT_ID}"
 echo "    Active Region:     ${REGION}"
 echo "    Active Zone:       ${ZONE}"
 echo "    Owner Label:       ${OWNER_LABEL}"
+echo "    Inference Engine:  ${INFERENCE_ENGINE}"
 
 # 4. Auto-detect operator IP for Master Authorized Networks
 echo "--> 4. Configuring Master Authorized Networks & GPU Scaling..."

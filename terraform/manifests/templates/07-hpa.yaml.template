@@ -18,14 +18,14 @@ spec:
   - type: Pods
     pods:
       metric:
-        name: prometheus.googleapis.com|vllm:num_requests_waiting|gauge
+        name: prometheus.googleapis.com|${HPA_QUEUE_METRIC}
       target:
         type: AverageValue
         averageValue: "16"
   - type: Pods
     pods:
       metric:
-        name: prometheus.googleapis.com|vllm:num_requests_running|gauge
+        name: prometheus.googleapis.com|${HPA_RUNNING_METRIC}
       target:
         type: AverageValue
         averageValue: "20"

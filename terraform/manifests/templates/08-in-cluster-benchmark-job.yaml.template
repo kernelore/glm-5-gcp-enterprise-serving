@@ -13,21 +13,68 @@ data:
     set -euo pipefail
     echo "=============================================================================="
     echo "GLM-5.2 Sovereign Enterprise Inference - In-Cluster Benchmark Execution"
-    echo "Target Gateway: http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000"
+    echo "Mode: ${BENCHMARK_MODE:-soak}"
     echo "=============================================================================="
     mkdir -p /results
     python3 -c '
     import urllib.request, json, sys, time
     print("Testing gateway cluster connectivity...")
     '
-    echo "Running in-cluster soak benchmark (10-minute stability verification)..."
-    python3 /scripts/soak_benchmark_glm52.py \
-      --endpoint="http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions" \
-      --api-key="${GATEWAY_MASTER_KEY}" \
-      --duration=600 \
-      --concurrency=18 \
-      --output=/results/incluster_soak_results.json || true
-    echo "In-cluster benchmark execution completed."
+    if [ "${BENCHMARK_MODE}" = "standard" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
+      echo "Running in-cluster standard benchmark..."
+      python3 /scripts/benchmark_glm52.py \
+        --endpoint="http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions" \
+        --api-key="${GATEWAY_MASTER_KEY}" \
+        --concurrency="${BENCHMARK_CONCURRENCY:-8}" \
+        --requests="${BENCHMARK_REQUESTS:-16}" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/standard_results.json || echo "WARNING: standard benchmark reported errors."
+    fi
+    if [ "${BENCHMARK_MODE}" = "massive" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
+      echo "Running in-cluster massive benchmark..."
+      python3 /scripts/massive_benchmark_glm52.py \
+        --endpoint="http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions" \
+        --api-key="${GATEWAY_MASTER_KEY}" \
+        --concurrency="${BENCHMARK_CONCURRENCY:-20}" \
+        --requests="${BENCHMARK_REQUESTS:-100}" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/massive_results.json || echo "WARNING: massive benchmark reported errors."
+    fi
+    if [ "${BENCHMARK_MODE}" = "soak" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
+      echo "Running in-cluster soak benchmark..."
+      python3 /scripts/soak_benchmark_glm52.py \
+        --endpoint="http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions" \
+        --api-key="${GATEWAY_MASTER_KEY}" \
+        --duration="${BENCHMARK_DURATION:-1800}" \
+        --concurrency="${BENCHMARK_CONCURRENCY:-18}" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/soak_results.json || echo "WARNING: soak benchmark reported errors."
+    fi
+    if [ "${BENCHMARK_MODE}" = "saturation" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
+      echo "Running in-cluster saturation sweep benchmark..."
+      python3 /scripts/run_saturation_sweep.py \
+        --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/saturation_results.json || echo "WARNING: saturation benchmark reported errors."
+    fi
+    if [ "${BENCHMARK_MODE}" = "prefill" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
+      echo "Running in-cluster prefill ingestion benchmark..."
+      python3 /scripts/run_prefill_benchmark.py \
+        --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/prefill_results.json || echo "WARNING: prefill benchmark reported errors."
+    fi
+    echo "In-cluster benchmark execution completed. Results in /results:"
+    ls -lh /results/
+    touch /results/.done
+    echo "Waiting up to 300s for results extraction..."
+    for _ in {1..150}; do
+      if [ -f /results/.extracted ]; then
+        echo "Results extracted successfully. Exiting."
+        break
+      fi
+      sleep 2
+    done
 ---
 apiVersion: batch/v1
 kind: Job
@@ -39,7 +86,7 @@ metadata:
     env: ${ENV_LABEL}
     owner: ${OWNER_LABEL}
 spec:
-  backoffLimit: 2
+  backoffLimit: 1
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
@@ -70,6 +117,14 @@ spec:
             secretKeyRef:
               name: glm52-gateway-secrets
               key: GATEWAY_MASTER_KEY
+        - name: BENCHMARK_MODE
+          value: "${BENCHMARK_MODE}"
+        - name: BENCHMARK_CONCURRENCY
+          value: "${BENCHMARK_CONCURRENCY}"
+        - name: BENCHMARK_REQUESTS
+          value: "${BENCHMARK_REQUESTS}"
+        - name: BENCHMARK_DURATION
+          value: "${BENCHMARK_DURATION}"
         resources:
           requests:
             cpu: "2"

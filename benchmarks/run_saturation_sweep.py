@@ -214,12 +214,18 @@ def main():
   parser.add_argument(
       "--output", default="benchmarks/saturation_sweep_results.json"
   )
+  parser.add_argument("--metadata", default="{}", help="JSON metadata string")
   args = parser.parse_args()
 
   sweep_levels = [1, 8, 16, 32, 64]
   sweep_results = []
 
   for c in sweep_levels:
+    try:
+      base_url = args.endpoint.split("/v1/")[0].split("/inference/")[0].rstrip("/")
+      urllib.request.urlopen(urllib.request.Request(f"{base_url}/flush_cache", method="POST"), timeout=2)
+    except Exception:
+      pass
     requests = max(c * 2, 8)  # Run at least 2 full waves per concurrency level
     res = run_sweep_concurrency(
         c, requests, args.endpoint, args.model, max_tokens=1024
@@ -227,8 +233,12 @@ def main():
     sweep_results.append(res)
     time.sleep(2)
 
+  try:
+    meta = json.loads(args.metadata) if isinstance(args.metadata, str) else args.metadata
+  except Exception:
+    meta = {}
   with open(args.output, "w") as f:
-    json.dump({"sweep_results": sweep_results}, f, indent=2)
+    json.dump({"metadata": meta, "sweep_results": sweep_results}, f, indent=2)
   print(f"\nSaved full saturation sweep results to {args.output}")
 
 
