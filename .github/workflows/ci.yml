@@ -22,8 +22,8 @@ jobs:
         run: |
           echo "Scanning git-tracked files for sensitive credentials and local home paths..."
           FAIL=0
-          # Check for real-looking LiteLLM / OpenAI keys (excluding the documented -change-me placeholder and this CI workflow file)
-          if git grep -nE 'sk-[a-zA-Z0-9-]{16,}' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*' | grep -v 'sk-glm52-master-secret-key-change-me'; then
+          # Check for real-looking LiteLLM / OpenAI keys (excluding the documented -change-me placeholder, dummy test aliases, and this CI workflow file)
+          if git grep -nE 'sk-[a-zA-Z0-9-]{16,}' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*' | grep -vE 'sk-glm52-master-secret-key-change-me|sk-glm52-quota-test-'; then
             echo "ERROR: Found potential exposed API keys!"
             FAIL=1
           fi

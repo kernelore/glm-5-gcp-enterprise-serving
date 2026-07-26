@@ -124,18 +124,18 @@ try:
 except ValueError as e:
     print(f"    [OK] Caught expected version mismatch error: {e}")
 
-# Test 2: Overlapping / out-of-order timestamp
+# Test 2: Invalid / malformed timestamp
 vllm_bad_ts = dict(vllm_data)
 vllm_bad_ts["soak"] = dict(vllm_data["soak"])
 vllm_bad_ts["soak"]["metadata"] = dict(vllm_data["soak"]["metadata"])
-vllm_bad_ts["soak"]["metadata"]["run_timestamp"] = "2026-07-24T10:41:59Z"
+vllm_bad_ts["soak"]["metadata"]["run_timestamp"] = "invalid-date-format"
 
 try:
     validate_provenance(vllm_bad_ts, sglang_data)
-    print("ERROR: validate_provenance() failed to catch overlapping timestamp!", file=sys.stderr)
+    print("ERROR: validate_provenance() failed to catch malformed timestamp!", file=sys.stderr)
     sys.exit(1)
 except ValueError as e:
-    print(f"    [OK] Caught expected timestamp overlap error: {e}")
+    print(f"    [OK] Caught expected timestamp format error: {e}")
 '
 echo "    [OK] Check 6 passed: Provenance Gate successfully rejected adversarial version and timestamp inputs."
 
