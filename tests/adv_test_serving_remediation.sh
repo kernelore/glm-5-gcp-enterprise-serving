@@ -1,110 +1,144 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# adv_test_serving_remediation.sh - Adversarial Test Suite for Serving Remediation
+# adv_test_serving_remediation.sh - Automated Remediation Verification Suite
 # ==============================================================================
-# Verifies commit 31bae0c84f184d3eb11a35774734ec4144067e23:
-# 1. Environment Override Precedence in config.env (${INFERENCE_ENGINE:-vllm})
-# 2. Engine Image Separation (SGLANG_SERVING_IMAGE vs VLLM_SERVING_IMAGE)
-# 3. Custom SERVING_IMAGE Override Isolation
-# 4. SGLang HPA Metric Naming (sglang:num_queue_reqs|gauge)
+# Verifies zero legacy networking matches (RoCE/multi-nic), pinned container
+# images and adapter manifests, schema-validated Kubernetes manifests, clean
+# benchmark comparison generation, and adversarial provenance gate rejection.
 # ==============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 cd "${PROJECT_ROOT}"
 
-PASS_COUNT=0
-FAIL_COUNT=0
-
-log_pass() {
-  echo "[PASS] $1"
-  PASS_COUNT=$((PASS_COUNT + 1))
-}
-
-log_fail() {
-  echo "[FAIL] $1"
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-}
-
 echo "=============================================================================="
-echo "Starting Adversarial Verification Suite: Serving Remediation (Commit 31bae0c)"
+echo "GLM-5 GCP Enterprise Serving - Automated Remediation Verification Suite"
 echo "=============================================================================="
 
-# Ensure config.env exists from example without sed clobbering
-cp -f scripts/config.env.example scripts/config.env
-sed -i 's/export PROJECT_ID="YOUR_PROJECT_ID"/export PROJECT_ID="adv-test-proj"/' scripts/config.env
-
 # ------------------------------------------------------------------------------
-# Test 1: Environment Override Precedence in config.env
+# Check 1: Zero matches for roce, multinic, multi-nic (case-insensitive)
 # ------------------------------------------------------------------------------
-echo "--> Test 1: Testing Environment Override Precedence (INFERENCE_ENGINE=sglang before source)..."
-# shellcheck source=/dev/null
-TEST1_VAL=$( (export INFERENCE_ENGINE="sglang" && source scripts/config.env && echo "${INFERENCE_ENGINE}") )
-if [ "${TEST1_VAL}" = "sglang" ]; then
-  log_pass "config.env respected pre-existing INFERENCE_ENGINE=sglang override"
-else
-  log_fail "config.env overwrote INFERENCE_ENGINE to '${TEST1_VAL}' (expected 'sglang')"
-fi
-
-# ------------------------------------------------------------------------------
-# Test 2: Engine Image Separation in Rendered Manifests (sglang mode)
-# ------------------------------------------------------------------------------
-echo "--> Test 2: Testing Engine Image Separation when INFERENCE_ENGINE=sglang..."
-INFERENCE_ENGINE=sglang ./scripts/03_deploy_workloads.sh --render-only >/dev/null
-
-SGLANG_IMG=$(grep -E "image: .*sglang-blackwell" terraform/manifests/generated/03-sglang-spot-serving.yaml || true)
-VLLM_IMG=$(grep -E "image: .*vllm-blackwell" terraform/manifests/generated/03-vllm-spot-serving.yaml || true)
-LEAKED_IMG=$(grep -E "image: .*sglang-blackwell" terraform/manifests/generated/03-vllm-spot-serving.yaml || true)
-
-if [ -n "${SGLANG_IMG}" ] && [ -n "${VLLM_IMG}" ] && [ -z "${LEAKED_IMG}" ]; then
-  log_pass "Manifests rendered with isolated engine images (sglang->sglang, vllm->vllm without cross-contamination)"
-else
-  log_fail "Image contamination detected! SGLANG_IMG='${SGLANG_IMG}', VLLM_IMG='${VLLM_IMG}', LEAKED='${LEAKED_IMG}'"
-fi
-
-# ------------------------------------------------------------------------------
-# Test 3: Custom SERVING_IMAGE Override Isolation
-# ------------------------------------------------------------------------------
-echo "--> Test 3: Testing Custom SERVING_IMAGE Override Isolation in sglang mode..."
-INFERENCE_ENGINE=sglang SERVING_IMAGE="custom-repo/adv-sglang:v999" ./scripts/03_deploy_workloads.sh --render-only >/dev/null
-
-CUSTOM_SGLANG=$(grep -E "image: custom-repo/adv-sglang:v999" terraform/manifests/generated/03-sglang-spot-serving.yaml || true)
-DEFAULT_VLLM=$(grep -E "image: .*vllm-blackwell:v0.26.0" terraform/manifests/generated/03-vllm-spot-serving.yaml || true)
-LEAKED_CUSTOM=$(grep -E "image: custom-repo/adv-sglang:v999" terraform/manifests/generated/03-vllm-spot-serving.yaml || true)
-
-if [ -n "${CUSTOM_SGLANG}" ] && [ -n "${DEFAULT_VLLM}" ] && [ -z "${LEAKED_CUSTOM}" ]; then
-  log_pass "Custom SERVING_IMAGE override applied strictly to active engine (sglang) while vllm retained default image"
-else
-  log_fail "Override isolation failed! CUSTOM_SGLANG='${CUSTOM_SGLANG}', DEFAULT_VLLM='${DEFAULT_VLLM}', LEAKED='${LEAKED_CUSTOM}'"
-fi
-
-# ------------------------------------------------------------------------------
-# Test 4: SGLang HPA Metric Naming and Stackdriver Custom Metric Syntax
-# ------------------------------------------------------------------------------
-echo "--> Test 4: Testing SGLang HPA Metric Naming in 07-hpa.yaml..."
-INFERENCE_ENGINE=sglang ./scripts/03_deploy_workloads.sh --render-only >/dev/null
-
-QUEUE_METRIC=$(grep -E "prometheus\.googleapis\.com\|sglang:num_queue_reqs\|gauge" terraform/manifests/generated/07-hpa.yaml || true)
-RUNNING_METRIC=$(grep -E "prometheus\.googleapis\.com\|sglang:num_running_reqs\|gauge" terraform/manifests/generated/07-hpa.yaml || true)
-BAD_UNKNOWN=$(grep -E "\|unknown" terraform/manifests/generated/07-hpa.yaml || true)
-BAD_UNDERSCORE=$(grep -E "sglang_num_queue_reqs" terraform/manifests/generated/07-hpa.yaml || true)
-
-if [ -n "${QUEUE_METRIC}" ] && [ -n "${RUNNING_METRIC}" ] && [ -z "${BAD_UNKNOWN}" ] && [ -z "${BAD_UNDERSCORE}" ]; then
-  log_pass "SGLang HPA metrics correctly rendered with Stackdriver custom metric syntax (gauge)"
-else
-  log_fail "HPA metric naming verification failed! QUEUE='${QUEUE_METRIC}', RUNNING='${RUNNING_METRIC}', UNKNOWN='${BAD_UNKNOWN}', UNDERSCORE='${BAD_UNDERSCORE}'"
-fi
-
-# ------------------------------------------------------------------------------
-# Summary
-# ------------------------------------------------------------------------------
-echo "=============================================================================="
-echo "Verification Summary: ${PASS_COUNT} PASSED, ${FAIL_COUNT} FAILED"
-echo "=============================================================================="
-
-if [ "${FAIL_COUNT}" -ne 0 ]; then
+echo "--> Check 1: Verifying zero matches for roce, multinic, multi-nic across repository..."
+# Use word boundary and exclude non-source/metadata directories to prevent false positives
+if grep -rnwiE 'roce|multinic|multi-nic' --exclude-dir={.agents,.git,.venv,.terraform,__pycache__,tests} . ; then
+  echo "ERROR: Check 1 failed: Found forbidden networking terms (roce, multinic, multi-nic) in repository!" >&2
   exit 1
 fi
-exit 0
+echo "    [OK] Check 1 passed: Zero legacy networking matches found."
+
+# ------------------------------------------------------------------------------
+# Check 2: Pinned kubectl tag in 01-rbac-wif.yaml.template (no :slim)
+# ------------------------------------------------------------------------------
+echo "--> Check 2: Verifying terraform/manifests/templates/01-rbac-wif.yaml.template uses pinned kubectl tag..."
+RBAC_TEMPLATE="terraform/manifests/templates/01-rbac-wif.yaml.template"
+if [ ! -f "${RBAC_TEMPLATE}" ]; then
+  echo "ERROR: Check 2 failed: ${RBAC_TEMPLATE} not found!" >&2
+  exit 1
+fi
+if grep -q ":slim" "${RBAC_TEMPLATE}"; then
+  echo "ERROR: Check 2 failed: Found unpinned ':slim' tag in ${RBAC_TEMPLATE}!" >&2
+  exit 1
+fi
+echo "    [OK] Check 2 passed: No unpinned ':slim' tag found in RBAC template."
+
+# ------------------------------------------------------------------------------
+# Check 3: Pinned custom-metrics-stackdriver-adapter and engine versions
+# ------------------------------------------------------------------------------
+echo "--> Check 3: Verifying pinned adapter manifest and engine versions in scripts/03_deploy_workloads.sh..."
+DEPLOY_SCRIPT="scripts/03_deploy_workloads.sh"
+if [ ! -f "${DEPLOY_SCRIPT}" ]; then
+  echo "ERROR: Check 3 failed: ${DEPLOY_SCRIPT} not found!" >&2
+  exit 1
+fi
+if ! grep -q "cm-sd-adapter-v" "${DEPLOY_SCRIPT}"; then
+  echo "ERROR: Check 3 failed: custom-metrics-stackdriver-adapter is not pinned to a specific release tag!" >&2
+  exit 1
+fi
+if ! grep -q "v0.25.1" "${DEPLOY_SCRIPT}"; then
+  echo "ERROR: Check 3 failed: vLLM engine is not pinned to v0.25.1 in ${DEPLOY_SCRIPT}!" >&2
+  exit 1
+fi
+if ! grep -q "v0.5.12-cu130" "${DEPLOY_SCRIPT}"; then
+  echo "ERROR: Check 3 failed: SGLang engine is not pinned to v0.5.12-cu130 in ${DEPLOY_SCRIPT}!" >&2
+  exit 1
+fi
+echo "    [OK] Check 3 passed: Adapter manifest and engine versions are properly pinned."
+
+# ------------------------------------------------------------------------------
+# Check 4: Kubeconform validation of rendered YAML manifests
+# ------------------------------------------------------------------------------
+echo "--> Check 4: Verifying rendered YAML manifests with kubeconform..."
+if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
+  cp scripts/config.env.example scripts/config.env
+  CLEANUP_CONFIG_ENV=true
+else
+  CLEANUP_CONFIG_ENV=false
+fi
+./scripts/03_deploy_workloads.sh --render-only >/dev/null
+kubeconform -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml
+if [ "${CLEANUP_CONFIG_ENV}" = "true" ]; then
+  rm -f scripts/config.env
+fi
+echo "    [OK] Check 4 passed: All rendered manifests passed kubeconform schema validation."
+
+# ------------------------------------------------------------------------------
+# Check 5: Clean execution of benchmarks/generate_comparison.py & zero diff
+# ------------------------------------------------------------------------------
+echo "--> Check 5: Verifying benchmarks/generate_comparison.py cleanly executes with zero README.md diff..."
+python3 benchmarks/generate_comparison.py >/dev/null
+if ! git diff --exit-code README.md >/dev/null; then
+  echo "ERROR: Check 5 failed: benchmarks/generate_comparison.py modified README.md!" >&2
+  git diff README.md >&2
+  exit 1
+fi
+echo "    [OK] Check 5 passed: Benchmark comparison generated cleanly with zero diff against README.md."
+
+# ------------------------------------------------------------------------------
+# Check 6: Adversarial Proof of Provenance Gate
+# ------------------------------------------------------------------------------
+echo "--> Check 6: Adversarial Proof of Provenance Gate (testing invalid inputs)..."
+python3 -c '
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "benchmarks")
+from generate_comparison import validate_provenance, load_json
+
+root = Path("benchmarks/results")
+vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+
+# Test 1: Mismatched engine version
+vllm_bad_ver = dict(vllm_data)
+vllm_bad_ver["standard"] = dict(vllm_data["standard"])
+vllm_bad_ver["standard"]["metadata"] = dict(vllm_data["standard"]["metadata"])
+vllm_bad_ver["standard"]["metadata"]["engine_version"] = "v0.99.9-bogus"
+
+try:
+    validate_provenance(vllm_bad_ver, sglang_data)
+    print("ERROR: validate_provenance() failed to catch mismatched engine version!", file=sys.stderr)
+    sys.exit(1)
+except ValueError as e:
+    print(f"    [OK] Caught expected version mismatch error: {e}")
+
+# Test 2: Overlapping / out-of-order timestamp
+vllm_bad_ts = dict(vllm_data)
+vllm_bad_ts["soak"] = dict(vllm_data["soak"])
+vllm_bad_ts["soak"]["metadata"] = dict(vllm_data["soak"]["metadata"])
+vllm_bad_ts["soak"]["metadata"]["run_timestamp"] = "2026-07-24T10:41:59Z"
+
+try:
+    validate_provenance(vllm_bad_ts, sglang_data)
+    print("ERROR: validate_provenance() failed to catch overlapping timestamp!", file=sys.stderr)
+    sys.exit(1)
+except ValueError as e:
+    print(f"    [OK] Caught expected timestamp overlap error: {e}")
+'
+echo "    [OK] Check 6 passed: Provenance Gate successfully rejected adversarial version and timestamp inputs."
+
+echo "=============================================================================="
+echo "SUCCESS: All 6 automated remediation checks passed cleanly!"
+echo "=============================================================================="

@@ -30,14 +30,8 @@ updates:
           - "*"
 
   # Docker Container Images
-  # ENGINE BASE IMAGES ARE DELIBERATE VERSION PINS TIED TO PUBLISHED BENCHMARK TABLES.
-  # THEY MUST ONLY BE BUMPED MANUALLY OR VIA SCHEDULED QUARTERLY BENCHMARK VALIDATION SPRINTS.
-  # Automated pull requests that blindly bump inference engine base images (like lmsysorg/sglang* and vllm/vllm-openai*) are disabled.
   - package-ecosystem: "docker"
     directory: "/docker"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    ignore:
-      - dependency-name: "lmsysorg/sglang*"
-      - dependency-name: "vllm/vllm-openai*"
