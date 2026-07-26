@@ -147,6 +147,10 @@ echo "--> Check 8: Verifying dependency floor constraints..."
 python3 tests/check_dependency_floors.py >/dev/null
 echo "    [OK] Check 8 passed: All dependencies satisfy or exceed floor constraints."
 
+echo "--> Check 9: Verifying self-contained secret scan..."
+bash tests/check_secret_scan.sh >/dev/null
+echo "    [OK] Check 9 passed: Secret scan passed cleanly."
+
 echo "=============================================================================="
-echo "SUCCESS: All 8 automated remediation checks passed cleanly!"
+echo "SUCCESS: All 9 automated remediation checks passed cleanly!"
 echo "=============================================================================="

@@ -21,34 +21,7 @@ jobs:
       - name: Scan for Leaked Credentials and Paths
         env:
           FORBIDDEN_PROJECT_ID: ${{ vars.FORBIDDEN_PROJECT_ID }}
-        run: |
-          echo "Scanning git-tracked files for sensitive credentials and local home paths..."
-          FAIL=0
-          # Check for real-looking LiteLLM / OpenAI keys (excluding documented placeholder, test aliases, and telemetry_sanitizer covered by unit test)
-          if git grep -nE 'sk-[a-zA-Z0-9-]{16,}' -- ':(exclude)benchmarks/telemetry_sanitizer.py' \
-             | grep -vE 'sk-glm52-master-secret-key-change-me|sk-glm52-quota-test-'; then
-            echo "ERROR: Found potential exposed API keys!"
-            FAIL=1
-          fi
-          # Check for local home directories (keeping usr-local-google-home and home-user paths but filtering kubernetes/runner hostPaths and telemetry_sanitizer covered by unit test)
-          if git grep -nE '/usr/local/google/home/[a-zA-Z0-9_-]|/home/[a-zA-Z0-9_-]' -- ':(exclude)benchmarks/telemetry_sanitizer.py' \
-             | grep -vE '/home/(kubernetes|runner)/'; then
-            echo "ERROR: Found local filesystem home paths in repository!"
-            FAIL=1
-          fi
-          # Check for forbidden project ID using repository variable (fail-closed when unset, passed via env with grep -F)
-          if [ -z "${FORBIDDEN_PROJECT_ID}" ]; then
-            echo "ERROR: FORBIDDEN_PROJECT_ID repository variable is not set; the project ID scan cannot run."
-            exit 1
-          fi
-          if git grep -nF "${FORBIDDEN_PROJECT_ID}"; then
-            echo "ERROR: Found hardcoded GCP project ID!"
-            FAIL=1
-          fi
-          if [ "${FAIL}" -ne 0 ]; then
-            exit 1
-          fi
-          echo "Secret scan passed cleanly."
+        run: bash tests/check_secret_scan.sh
 
   terraform:
     runs-on: ubuntu-latest
