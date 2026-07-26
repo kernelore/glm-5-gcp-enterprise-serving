@@ -8,6 +8,7 @@ Logs per-minute progress and exports aggregate 30-minute latency/throughput perc
 
 import argparse
 import concurrent.futures
+from datetime import datetime, timezone
 import json
 import os
 import statistics
@@ -165,6 +166,8 @@ def main():
     print("-" * 75)
 
     start_soak_time = time.perf_counter()
+    start_dt = datetime.now(timezone.utc)
+    suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     results = []
     completed_requests = 0
     failed_requests = 0
@@ -230,6 +233,9 @@ def main():
                     sys.stdout.flush()
 
     total_soak_time = time.perf_counter() - start_soak_time
+    end_dt = datetime.now(timezone.utc)
+    suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
     successful_results = [r for r in results if r["success"]]
 
     ttft_vals = sorted([r["ttft_ms"] for r in successful_results]) if successful_results else []
@@ -257,7 +263,12 @@ def main():
         "ttft_mean_ms": ttft_mean,
         "tpot_mean_ms": tpot_mean,
         "throughput_tokens_sec": throughput_tps,
-        "soak_config": vars(args),
+        "soak_config": {
+            **vars(args),
+            "suite_start_ts": suite_start_ts,
+            "suite_end_ts": suite_end_ts,
+            "suite_duration_s": suite_duration_s,
+        },
         "execution_summary": {
             "total_duration_seconds": round(total_soak_time, 3),
             "total_requests_completed": completed_requests,

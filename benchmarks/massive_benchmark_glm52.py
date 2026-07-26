@@ -8,6 +8,7 @@ Measures TTFT (Time-to-First-Token), TPOT (Time-Per-Output-Token), KV Cache Satu
 
 import argparse
 import concurrent.futures
+from datetime import datetime, timezone
 import json
 import os
 import statistics
@@ -178,6 +179,8 @@ def main():
     print("-" * 70)
 
     start_bench_time = time.perf_counter()
+    start_dt = datetime.now(timezone.utc)
+    suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     results = []
     completed_count = 0
 
@@ -207,6 +210,9 @@ def main():
                     break
 
     total_bench_time = time.perf_counter() - start_bench_time
+    end_dt = datetime.now(timezone.utc)
+    suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
     successful_results = [r for r in results if r["success"]]
     failed_results = [r for r in results if not r["success"]]
 
@@ -235,7 +241,12 @@ def main():
         "ttft_mean_ms": ttft_mean,
         "tpot_mean_ms": tpot_mean,
         "throughput_tokens_sec": throughput_tps,
-        "benchmark_config": vars(args),
+        "benchmark_config": {
+            **vars(args),
+            "suite_start_ts": suite_start_ts,
+            "suite_end_ts": suite_end_ts,
+            "suite_duration_s": suite_duration_s,
+        },
         "execution_summary": {
             "total_requests": args.requests,
             "successful_requests": len(successful_results),

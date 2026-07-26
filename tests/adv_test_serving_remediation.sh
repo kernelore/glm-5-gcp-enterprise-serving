@@ -151,6 +151,53 @@ echo "--> Check 9: Verifying self-contained secret scan..."
 bash tests/check_secret_scan.sh >/dev/null
 echo "    [OK] Check 9 passed: Secret scan passed cleanly."
 
+# ------------------------------------------------------------------------------
+# Check 10: Adversarial Proof of Suite Timestamp Gate
+# ------------------------------------------------------------------------------
+echo "--> Check 10: Adversarial Proof of Suite Timestamp Gate (testing skip and overlap rejection)..."
+python3 -c '
+import sys
+import io
+from contextlib import redirect_stdout
+from pathlib import Path
+
+sys.path.insert(0, "benchmarks")
+from generate_comparison import validate_provenance, load_json
+
+root = Path("benchmarks/results")
+vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+
+# Skip path: ensure baseline JSONs (lacking suite_start_ts) print informational notice and do not fail
+buf = io.StringIO()
+with redirect_stdout(buf):
+    validate_provenance(vllm_data, sglang_data)
+out = buf.getvalue()
+if "NOTE: Skipping interval overlap checks for vllm standard" not in out:
+    print("ERROR: validate_provenance() failed to print skip notice for baseline without suite_start_ts!", file=sys.stderr)
+    sys.exit(1)
+print("    [OK] Skip path verified: Informational notice printed without error when suite_start_ts is absent.")
+
+# Rejection path: inject overlapping suite_start_ts and suite_end_ts
+vllm_overlap = {s: dict(vllm_data[s]) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+vllm_overlap["standard"] = dict(vllm_data["standard"])
+vllm_overlap["standard"]["benchmark_config"] = dict(vllm_data["standard"].get("benchmark_config", {}))
+vllm_overlap["standard"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:00:00Z"
+vllm_overlap["standard"]["benchmark_config"]["suite_end_ts"] = "2026-07-26T10:10:00Z"
+vllm_overlap["massive"] = dict(vllm_data["massive"])
+vllm_overlap["massive"]["benchmark_config"] = dict(vllm_data["massive"].get("benchmark_config", {}))
+vllm_overlap["massive"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:05:00Z"
+vllm_overlap["massive"]["benchmark_config"]["suite_end_ts"] = "2026-07-26T10:20:00Z"
+
+try:
+    validate_provenance(vllm_overlap, sglang_data)
+    print("ERROR: validate_provenance() failed to catch overlapping suite timestamps!", file=sys.stderr)
+    sys.exit(1)
+except ValueError as e:
+    print(f"    [OK] Caught expected interval overlap error: {e}")
+'
+echo "    [OK] Check 10 passed: Suite timestamp gate correctly handles skip and overlap rejection paths."
+
 echo "=============================================================================="
-echo "SUCCESS: All 9 automated remediation checks passed cleanly!"
+echo "=== ALL 10 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="

@@ -7,6 +7,7 @@ prompt throughput.
 """
 
 import argparse
+from datetime import datetime, timezone
 import json
 import time
 import urllib.request
@@ -27,6 +28,8 @@ def measure_prefill(
     output="benchmarks/prefill_results.json",
     metadata="{}",
 ):
+  start_dt = datetime.now(timezone.utc)
+  suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   payload = {
       "model": model,
       "prompt": SYNTHETIC_8K,
@@ -91,6 +94,9 @@ def measure_prefill(
         pass
 
   t_end = time.time()
+  end_dt = datetime.now(timezone.utc)
+  suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
   ttft = (t_first - t_start) if t_first else (t_end - t_start)
   prefill_tok_s = prompt_tokens / ttft if ttft > 0 else 0.0
 
@@ -120,6 +126,15 @@ def measure_prefill(
   except Exception:
     meta = {}
   result["metadata"] = meta
+  result["prefill_config"] = {
+      "endpoint": endpoint,
+      "model": model,
+      "output": output,
+      "metadata": meta,
+      "suite_start_ts": suite_start_ts,
+      "suite_end_ts": suite_end_ts,
+      "suite_duration_s": suite_duration_s,
+  }
   try:
     from telemetry_sanitizer import sanitize_telemetry
   except ImportError:

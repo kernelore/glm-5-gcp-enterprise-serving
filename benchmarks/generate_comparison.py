@@ -52,6 +52,20 @@ def normalize_version(ver: str) -> str:
         ver = ver[:-6]
     return ver
 
+def get_suite_timestamps(data: dict) -> tuple:
+    for key in ["benchmark_config", "soak_config", "sweep_config", "prefill_config", "metadata"]:
+        cfg = data.get(key)
+        if isinstance(cfg, dict):
+            start_ts = cfg.get("suite_start_ts")
+            end_ts = cfg.get("suite_end_ts")
+            if start_ts and end_ts:
+                return start_ts, end_ts
+    start_ts = data.get("suite_start_ts")
+    end_ts = data.get("suite_end_ts")
+    if start_ts and end_ts:
+        return start_ts, end_ts
+    return None, None
+
 def get_suite_duration(suite_name: str, data: dict) -> float:
     dur = 0.0
     if suite_name in ["standard", "massive"]:
@@ -68,11 +82,8 @@ def get_suite_duration(suite_name: str, data: dict) -> float:
 
 def validate_provenance(vllm: dict, sglang: dict):
     """
-    Validates engine identity, container image, engine version, and timestamp formatting.
-    Note: Monotonicity and interval-overlap checks across suite timestamps were removed because
-    run_timestamp records when the collector harness builds the payload or finishes writing the file,
-    rather than when the suite execution started. Consequently, interval overlap calculations against
-    test duration are structurally invalid and unsupported by the field semantics.
+    Validates engine identity, container image, engine version, timestamp formatting,
+    and interval monotonicity/non-overlap against explicit suite_start_ts / suite_end_ts boundaries.
     """
     suites = ["standard", "massive", "soak", "saturation", "prefill"]
     for s in suites:
@@ -98,6 +109,8 @@ def validate_provenance(vllm: dict, sglang: dict):
             raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json engine_version '{g_meta.get('engine_version')}' does not match expected '0.5.12'")
 
     for eng_name, eng_data in [("vllm", vllm), ("sglang", sglang)]:
+        prev_end_dt = None
+        prev_suite_name = None
         for s in suites:
             meta = get_metadata(eng_data[s])
             ts_str = meta.get("run_timestamp", "")
@@ -107,6 +120,26 @@ def validate_provenance(vllm: dict, sglang: dict):
                 datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
             except Exception as e:
                 raise ValueError(f"PROVENANCE GATE FAILURE: Invalid run_timestamp '{ts_str}' in results/{eng_name}/{s}_results.json: {e}")
+
+            start_ts, end_ts = get_suite_timestamps(eng_data[s])
+            if not start_ts or not end_ts:
+                print(f"NOTE: Skipping interval overlap checks for {eng_name} {s} (suite_start_ts not recorded in baseline file).")
+                continue
+            try:
+                curr_start_dt = datetime.fromisoformat(start_ts.replace("Z", "+00:00"))
+                curr_end_dt = datetime.fromisoformat(end_ts.replace("Z", "+00:00"))
+            except Exception as e:
+                raise ValueError(f"PROVENANCE GATE FAILURE: Invalid suite timestamp in results/{eng_name}/{s}_results.json: {e}")
+            
+            if curr_start_dt > curr_end_dt:
+                raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json has suite_start_ts after suite_end_ts")
+            
+            if prev_end_dt is not None:
+                if curr_start_dt < prev_end_dt:
+                    raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json suite_start_ts ({start_ts}) overlaps/precedes previous suite {prev_suite_name} suite_end_ts ({prev_end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')})")
+            
+            prev_end_dt = curr_end_dt
+            prev_suite_name = s
 
 def validate_parity_and_sanity(vllm: dict, sglang: dict):
     suites = ["standard", "massive", "soak", "saturation", "prefill"]

@@ -9,6 +9,7 @@ Connects directly to vLLM on port 8000 to guarantee 0% cache hit rate.
 
 import argparse
 import concurrent.futures
+from datetime import datetime, timezone
 import json
 import random
 import statistics
@@ -243,6 +244,9 @@ def main():
   parser.add_argument("--metadata", default="{}", help="JSON metadata string")
   args = parser.parse_args()
 
+  start_dt = datetime.now(timezone.utc)
+  suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  start_perf = time.perf_counter()
   sweep_levels = [1, 8, 16, 32, 64]
   sweep_results = []
 
@@ -259,6 +263,10 @@ def main():
     sweep_results.append(res)
     time.sleep(2)
 
+  end_dt = datetime.now(timezone.utc)
+  suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+  suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
+
   try:
     meta = json.loads(args.metadata) if isinstance(args.metadata, str) else args.metadata
   except Exception:
@@ -267,7 +275,13 @@ def main():
     from telemetry_sanitizer import sanitize_telemetry
   except ImportError:
     from benchmarks.telemetry_sanitizer import sanitize_telemetry
-  out_payload = sanitize_telemetry({"metadata": meta, "sweep_results": sweep_results}, args.output)
+  sweep_cfg = {
+      **vars(args),
+      "suite_start_ts": suite_start_ts,
+      "suite_end_ts": suite_end_ts,
+      "suite_duration_s": suite_duration_s,
+  }
+  out_payload = sanitize_telemetry({"metadata": meta, "sweep_config": sweep_cfg, "sweep_results": sweep_results}, args.output)
 
   with open(args.output, "w") as f:
     json.dump(out_payload, f, indent=2)
