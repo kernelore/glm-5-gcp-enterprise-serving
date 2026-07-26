@@ -142,8 +142,8 @@ def validate_rendered_manifests(deploy_script_path: str = "scripts/03_deploy_wor
                     raise ValueError(f"PROVENANCE GATE FAILURE: Rendered image URI '{img}' missing tag in {manifest_name}")
                 repo_path = img.rsplit(":", 1)[0]
                 expected_suffix = f"{eng}-blackwell"
-                if not repo_path.endswith(expected_suffix):
-                    raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} repository '{repo_path}' does not end with expected '{expected_suffix}'")
+                if repo_path.rsplit("/", 1)[-1] != expected_suffix:
+                    raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} repository '{repo_path}' does not match expected '{expected_suffix}'")
                 tag = img.rsplit(":", 1)[-1]
                 norm_tag = normalize_version(tag)
                 if norm_tag != pins[eng]:

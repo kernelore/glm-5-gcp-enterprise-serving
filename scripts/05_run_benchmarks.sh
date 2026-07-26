@@ -167,16 +167,40 @@ ENGINE="${INFERENCE_ENGINE:-vllm}"
 RESULT_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
 mkdir -p "${RESULT_DIR}"
 
-IMAGE=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
+IMAGE=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].image}') || {
+  echo "ERROR: could not read image from deployment glm52-nvfp4-serving." >&2
+  echo "       Refusing to record a benchmark whose image provenance is unverified." >&2
+  exit 1
+}
+IMAGE="$(printf '%s' "${IMAGE}" | tr -d '[:space:]')"
+[ -n "${IMAGE}" ] || { echo "ERROR: image probe returned empty." >&2; exit 1; }
 IMAGE="${IMAGE/${PROJECT_ID}/YOUR_PROJECT_ID}"
 IMAGE=$(echo "${IMAGE}" | sed -E 's|docker\.pkg\.dev/[^/]+|docker.pkg.dev/YOUR_PROJECT_ID|g')
-FLAGS=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null || echo "[]")
+
+FLAGS=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].args}') || {
+  echo "ERROR: could not read launch flags from deployment glm52-nvfp4-serving." >&2
+  echo "       Refusing to record a benchmark whose flags provenance is unverified." >&2
+  exit 1
+}
+FLAGS="$(printf '%s' "${FLAGS}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+[ -n "${FLAGS}" ] || { echo "ERROR: launch flags probe returned empty." >&2; exit 1; }
+
 RUN_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 if [ "${ENGINE}" = "sglang" ]; then
-  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c sglang-engine -- python3 -c "import sglang; print(sglang.__version__)" 2>/dev/null || echo "0.5.12-cu130")
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c sglang-engine -- python3 -c "import sglang; print(sglang.__version__)") || {
+    echo "ERROR: could not read sglang.__version__ from the running container." >&2
+    echo "       Refusing to record a benchmark whose engine provenance is unverified." >&2
+    exit 1
+  }
 else
-  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c vllm-engine -- python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "0.25.1")
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c vllm-engine -- python3 -c "import vllm; print(vllm.__version__)") || {
+    echo "ERROR: could not read vllm.__version__ from the running container." >&2
+    echo "       Refusing to record a benchmark whose engine provenance is unverified." >&2
+    exit 1
+  }
 fi
+ENGINE_VER="$(printf '%s' "${ENGINE_VER}" | tr -d '[:space:]')"
+[ -n "${ENGINE_VER}" ] || { echo "ERROR: engine version probe returned empty." >&2; exit 1; }
 METADATA_JSON=$(python3 -c 'import json, sys; print(json.dumps({"engine": sys.argv[1], "engine_version": sys.argv[2], "image": sys.argv[3], "launch_flags": sys.argv[4], "run_timestamp": sys.argv[5], "runs": 1}))' "${ENGINE}" "${ENGINE_VER}" "${IMAGE}" "${FLAGS}" "${RUN_TS}")
 
 # Check for In-Cluster execution mode

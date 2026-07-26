@@ -370,7 +370,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
             sys.exit(1)
         print(f"    [OK] Case 3 (Missing Image Line) passed: Caught expected fail-closed error: {e}")
 
-    # Case 4: Swap IMAGE_NAME to sglang-blackwell inside vLLM branch -> must fail repo check
+    # Case 4a: Swap IMAGE_NAME to sglang-blackwell inside vLLM branch -> must fail repo check
     for tf in Path("terraform/manifests/templates").glob("*.template"):
         shutil.copy(tf, templates_dir / tf.name)
     repo_swap_content = real_content.replace("IMAGE_NAME=\"vllm-blackwell\"", "IMAGE_NAME=\"sglang-blackwell\"")
@@ -383,13 +383,56 @@ with tempfile.TemporaryDirectory() as tmpdir:
         print("ERROR: validate_rendered_manifests() failed to catch swapped IMAGE_NAME!", file=sys.stderr)
         sys.exit(1)
     except ValueError as e:
-        if "PROVENANCE GATE FAILURE" not in str(e) or "does not end with expected" not in str(e) or "vllm-blackwell" not in str(e):
+        if "PROVENANCE GATE FAILURE" not in str(e) or "does not match expected" not in str(e) or "vllm-blackwell" not in str(e):
             print(f"ERROR: Expected PROVENANCE GATE FAILURE for repository name mismatch, got: {e}", file=sys.stderr)
             sys.exit(1)
-        print(f"    [OK] Case 4 (Swapped Repo Name) passed: Caught expected fail-closed error: {e}")
+        print(f"    [OK] Case 4a (Swapped Repo Name) passed: Caught expected fail-closed error: {e}")
+
+    # Case 4b: Prefixed IMAGE_NAME evil-vllm-blackwell inside vLLM branch -> must fail repo check
+    repo_prefix_content = real_content.replace("IMAGE_NAME=\"vllm-blackwell\"", "IMAGE_NAME=\"evil-vllm-blackwell\"")
+    if repo_prefix_content == real_content:
+        print("ERROR: Failed to prefix IMAGE_NAME in temporary script!", file=sys.stderr)
+        sys.exit(1)
+    tmp_script.write_text(repo_prefix_content, encoding="utf-8")
+    try:
+        validate_rendered_manifests(str(tmp_script))
+        print("ERROR: validate_rendered_manifests() failed to catch prefixed IMAGE_NAME evil-vllm-blackwell!", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        if "PROVENANCE GATE FAILURE" not in str(e) or "does not match expected" not in str(e) or "vllm-blackwell" not in str(e):
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE for repository name mismatch, got: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"    [OK] Case 4b (Prefixed Repo Name) passed: Caught expected fail-closed error: {e}")
 '
 echo "    [OK] Check 13 passed: Rendered manifest tag verification and fail-closed absence checks verified."
 
+echo "--> Check 14: Verifying benchmark provenance probes carry no || echo fallback and assert explicit non-zero exits..."
+python3 -c '
+from pathlib import Path
+import sys
+
+content = Path("scripts/05_run_benchmarks.sh").read_text(encoding="utf-8")
+lines = content.splitlines()
+
+probes_checked = 0
+for i, line in enumerate(lines, 1):
+    if any(k in line for k in ["IMAGE=$(kubectl get deployment", "FLAGS=$(kubectl get deployment", "ENGINE_VER=$(kubectl exec"]):
+        probes_checked += 1
+        if "|| echo" in line or "||echo" in line:
+            print(f"ERROR: Provenance probe at line {i} contains fallback literal (|| echo): {line}", file=sys.stderr)
+            sys.exit(1)
+        if "||" not in line and "exit 1" not in line:
+            block_has_exit = any("exit 1" in lines[j] for j in range(i-1, min(i+10, len(lines))))
+            if not block_has_exit:
+                print(f"ERROR: Provenance probe at line {i} is not followed by an explicit non-zero exit!", file=sys.stderr)
+                sys.exit(1)
+
+if probes_checked != 4:
+    print(f"ERROR: Expected to check exactly 4 provenance probe lines, found {probes_checked}", file=sys.stderr)
+    sys.exit(1)
+'
+echo "    [OK] Check 14 passed: Provenance probes carry no || echo fallback and assert explicit non-zero exits (lint against reintroduction, not a behavioural test)."
+
 echo "=============================================================================="
-echo "=== ALL 13 REMEDIATION CHECKS PASSED ==="
+echo "=== ALL 14 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="
