@@ -1,0 +1,132 @@
+{
+  "metadata": {
+    "engine": "vllm",
+    "engine_version": "0.25.1",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.25.1",
+    "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\n    --tensor-parallel-size=8 \\\\\\n    --pipeline-parallel-size=1 \\\\\\n    --served-model-name=glm-5.2-moe \\\\\\n    --port=8000 \\\\\\n    --kv-cache-dtype=auto \\\\\\n    --enable-prefix-caching \\\\\\n    --enable-chunked-prefill \\\\\\n    --max-num-seqs=64 \\\\\\n    --max-num-batched-tokens=8192 \\\\\\n    --max-model-len=131072 \\\\\\n    --gpu-memory-utilization=0.94\\n\"]",
+    "run_timestamp": "2026-07-24T10:37:00Z",
+    "runs": 1
+  },
+  "sweep_results": [
+    {
+      "concurrency": 1,
+      "requests": 8,
+      "successful": 8,
+      "error_rate_pct": 0.0,
+      "token_count_source": "usage",
+      "total_tokens": 8192,
+      "total_duration_sec": 77.2431116104126,
+      "aggregate_tok_s": 106.0547643564335,
+      "per_gpu_tok_s": 13.256845544554187,
+      "per_user_tok_s": 106.0547643564335,
+      "ttft_ms": {
+        "mean": 302.61996388435364,
+        "p50": 300.7826805114746,
+        "p90": 310.4567527770996,
+        "p99": 310.4567527770996
+      },
+      "tpot_ms": {
+        "mean": 9.189114261941613,
+        "p50": 9.143352508544922,
+        "p90": 9.824752807617188,
+        "p99": 18.02992820739746
+      }
+    },
+    {
+      "concurrency": 8,
+      "requests": 16,
+      "successful": 16,
+      "error_rate_pct": 0.0,
+      "token_count_source": "usage",
+      "total_tokens": 16384,
+      "total_duration_sec": 25.533173084259033,
+      "aggregate_tok_s": 641.6750454764506,
+      "per_gpu_tok_s": 80.20938068455632,
+      "per_user_tok_s": 80.20938068455632,
+      "ttft_ms": {
+        "mean": 577.8686553239822,
+        "p50": 535.9301567077637,
+        "p90": 691.617488861084,
+        "p99": 693.8304901123047
+      },
+      "tpot_ms": {
+        "mean": 11.93006324009097,
+        "p50": 11.861085891723633,
+        "p90": 13.245105743408203,
+        "p99": 22.552013397216797
+      }
+    },
+    {
+      "concurrency": 16,
+      "requests": 32,
+      "successful": 32,
+      "error_rate_pct": 0.0,
+      "token_count_source": "usage",
+      "total_tokens": 32768,
+      "total_duration_sec": 29.112574338912964,
+      "aggregate_tok_s": 1125.5617458810937,
+      "per_gpu_tok_s": 140.6952182351367,
+      "per_user_tok_s": 70.34760911756835,
+      "ttft_ms": {
+        "mean": 747.5120946764946,
+        "p50": 760.9820365905762,
+        "p90": 803.9474487304688,
+        "p99": 808.0742359161377
+      },
+      "tpot_ms": {
+        "mean": 13.513208785945809,
+        "p50": 13.439655303955078,
+        "p90": 15.53654670715332,
+        "p99": 19.382476806640625
+      }
+    },
+    {
+      "concurrency": 32,
+      "requests": 64,
+      "successful": 64,
+      "error_rate_pct": 0.0,
+      "token_count_source": "usage",
+      "total_tokens": 65536,
+      "total_duration_sec": 43.19350790977478,
+      "aggregate_tok_s": 1517.2650514261443,
+      "per_gpu_tok_s": 189.65813142826804,
+      "per_user_tok_s": 47.41453285706701,
+      "ttft_ms": {
+        "mean": 1055.87774887681,
+        "p50": 1124.0019798278809,
+        "p90": 1289.090871810913,
+        "p99": 1304.232120513916
+      },
+      "tpot_ms": {
+        "mean": 20.106036971508612,
+        "p50": 19.896507263183594,
+        "p90": 23.49400520324707,
+        "p99": 30.92336654663086
+      }
+    },
+    {
+      "concurrency": 64,
+      "requests": 128,
+      "successful": 128,
+      "error_rate_pct": 0.0,
+      "token_count_source": "usage",
+      "total_tokens": 131072,
+      "total_duration_sec": 60.086644887924194,
+      "aggregate_tok_s": 2181.383238230064,
+      "per_gpu_tok_s": 272.672904778758,
+      "per_user_tok_s": 34.08411309734475,
+      "ttft_ms": {
+        "mean": 1547.4669951945543,
+        "p50": 1613.9752864837646,
+        "p90": 2123.73423576355,
+        "p99": 2302.0734786987305
+      },
+      "tpot_ms": {
+        "mean": 27.885489714369317,
+        "p50": 27.17757225036621,
+        "p90": 34.23643112182617,
+        "p99": 59.74173545837402
+      }
+    }
+  ]
+}

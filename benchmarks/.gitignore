@@ -1,4 +1,9 @@
-# Ignore generated benchmark results and logs
+# Ignore generated benchmark results and logs in root benchmarks dir or scratch
 *.json
 *.log
 results/
+
+# Allow committed raw benchmark result JSONs under results/{vllm,sglang}/
+!results/
+!results/*/
+!results/**/*.json

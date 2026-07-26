@@ -2,8 +2,8 @@
 
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-NVFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
-[![vLLM](https://img.shields.io/badge/Inference-vLLM_0.26.0-8A2BE2?style=flat-square)](https://docs.vllm.ai/)
-[![SGLang](https://img.shields.io/badge/Inference-SGLang_v0.5.16-E50914?style=flat-square)](https://github.com/sgl-project/sglang)
+[![vLLM](https://img.shields.io/badge/Inference-vLLM_0.25.1-8A2BE2?style=flat-square)](https://docs.vllm.ai/)
+[![SGLang](https://img.shields.io/badge/Inference-SGLang_v0.5.12-E50914?style=flat-square)](https://github.com/sgl-project/sglang)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 
 > [!IMPORTANT]
@@ -100,10 +100,10 @@ To switch engines on a live cluster:
 ```bash
 ./scripts/03_deploy_workloads.sh
 ```
-*Note: Because both engines share the same Kubernetes Deployment name (`glm52-nvfp4-serving`) with `maxSurge: 0`, switching engines triggers an automated rolling replacement on the GPU node pool. A brief transition window occurs while the new engine container loads weights from Hyperdisk ML (~30–45 seconds).*
+*Note: Because both engines share the same Kubernetes Deployment name (`glm52-nvfp4-serving`) with `maxSurge: 0`, switching engines triggers an automated rolling replacement on the GPU node pool. A brief transition window occurs while the new engine container loads weights from Hyperdisk ML and captures CUDA graphs (~14m 33s / 873 seconds).*
 
 ### Engine Flag & Feature Comparison
-| Functional Domain | vLLM (`v0.26.0`) | SGLang (`v0.5.16-cu130`) | Technical Rationale & Notes |
+| Functional Domain | vLLM (`v0.25.1`) | SGLang (`v0.5.12-cu130`) | Technical Rationale & Notes |
 | :--- | :--- | :--- | :--- |
 | **Server Entrypoint** | `vllm.entrypoints.openai.api_server` | `sglang.launch_server` | OpenAI-compatible HTTP servers on port 8000. |
 | **Network Binding** | `--port=8000` | `--host 0.0.0.0 --port 8000` | SGLang defaults to 30000; explicitly binds 0.0.0.0:8000 for hostNetwork parity. |
@@ -126,44 +126,44 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 * **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets and radix cache flushing to ensure 0% prefix-cache hits (measuring true cold decoding and prefill throughput).
 * **Sequential Execution & Drain Protocol:** To prevent resource contention and queue contamination, benchmark suites were executed strictly sequentially with full queue drain intervals between runs.
 * **Engine Provenance Verification:** Engine identity and container provenance were verified prior to every suite by inspecting `/metrics` endpoints (`^vllm:` vs `^sglang:`) and deployment container images. Collection timestamps recorded in suite metadata:
-  * **vLLM** (`vllm-blackwell:0.26.0`): Standard (2026-07-26T11:00:00Z), Massive (2026-07-26T11:05:00Z), Soak (2026-07-26T11:10:00Z), Saturation (2026-07-26T11:15:00Z), Prefill (2026-07-26T11:20:00Z).
-  * **SGLang** (`sglang-blackwell:0.5.16-cu130`): Standard (2026-07-26T11:00:00Z), Massive (2026-07-26T11:05:00Z), Soak (2026-07-26T11:10:00Z), Saturation (2026-07-26T11:15:00Z), Prefill (2026-07-26T11:20:00Z).
+  * **vLLM** (`vllm-blackwell:v0.25.1`): Standard (2026-07-24T10:00:00Z), Massive (2026-07-24T10:02:00Z), Soak (2026-07-24T10:05:00Z), Saturation (2026-07-24T10:37:00Z), Prefill (2026-07-24T10:42:00Z).
+  * **SGLang** (`sglang-blackwell:v0.5.12-cu130`): Standard (2026-07-24T14:00:00Z), Massive (2026-07-24T14:02:00Z), Soak (2026-07-24T14:05:00Z), Saturation (2026-07-24T14:37:00Z), Prefill (2026-07-24T14:42:00Z).
 
 #### Table 1: Production Workload Suite Summary (Gateway Port 4000)
-| Workload Suite | Metric | vLLM (0.26.0) | SGLang (0.5.16-cu130) | Delta ($\Delta$) |
+| Workload Suite | Metric | vLLM (0.25.1) | SGLang (0.5.12) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- | :--- |
-| Standard Suite ($c=8$, $128\text{ tok}$) | TTFT P50 (ms) | 115.42 | 111.88 | **+3.07%** |
-|  | TPOT mean (ms) | 8.48 | 3.91 | **+53.89%** |
-|  | Throughput (tok/s) | 32.19 | 1136.04 | **+3429.17%** |
+| Standard Suite ($c=8$, $128\text{ tok}$) | TTFT P50 (ms) | 794.73 | 547.99 | **+31.05%** |
+|  | TPOT mean (ms) | 23.09 | 10.17 | **+55.95%** |
+|  | Throughput (tok/s) | 285.77 | 556.08 | **+94.59%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Massive Stress ($c=20$, $256\text{ tok}$) | TTFT P50 (ms) | 311.75 | 244.22 | **+21.66%** |
-|  | TPOT mean (ms) | 8.44 | 2.66 | **+68.48%** |
-|  | Throughput (tok/s) | 1885.95 | 2470.48 | **+30.99%** |
+| Massive Stress ($c=20$, $256\text{ tok}$) | TTFT P50 (ms) | 722.94 | 775.13 | **-7.22%** |
+|  | TPOT mean (ms) | 19.19 | 14.41 | **+24.91%** |
+|  | Throughput (tok/s) | 825.03 | 904.72 | **+9.66%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Endurance Soak ($c=18$, $1800\text{s}$) | TTFT P50 (ms) | 206.94 | 134.44 | **+35.03%** |
-|  | TPOT mean (ms) | 3.02 | 1.05 | **+65.23%** |
-|  | Throughput (tok/s) | 2730.36 | 4086.68 | **+49.68%** |
-|  | Completed cycles | 6243 | 29117 | **+366.39%** |
+| Endurance Soak ($c=18$, $1800\text{s}$) | TTFT P50 (ms) | 132.99 | 301.74 | **-126.89%** |
+|  | TPOT mean (ms) | 24.66 | 15.57 | **+36.86%** |
+|  | Throughput (tok/s) | 877.20 | 1074.28 | **+22.47%** |
+|  | Completed cycles | 6183 | 7565 | **+22.35%** |
 
 #### Table 2: Concurrency Saturation Sweep (Direct Port 8000, 0% Cache Hits)
-| Concurrency ($c$) | vLLM (0.26.0) tok/s | SGLang (0.5.16-cu130) tok/s | Throughput $\Delta$ | vLLM (0.26.0) TTFT P99 (s) | SGLang (0.5.16-cu130) TTFT P99 (s) | TTFT P99 $\Delta$ |
+| Concurrency ($c$) | vLLM (0.25.1) tok/s | SGLang (0.5.12) tok/s | Throughput $\Delta$ | vLLM (0.25.1) TTFT P99 (s) | SGLang (0.5.12) TTFT P99 (s) | TTFT P99 $\Delta$ |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| $c=1$ | 106.28 | 118.25 | **+11.26%** | 0.3245 s | 0.1953 s | **+39.82%** |
-| $c=8$ | 644.58 | 756.98 | **+17.44%** | 0.5250 s | 0.3538 s | **+32.61%** |
-| $c=16$ | 1124.30 | 1292.40 | **+14.95%** | 0.9352 s | 0.5322 s | **+43.09%** |
-| $c=32$ | 1510.43 | 2119.33 | **+40.31%** | 1.2534 s | 0.8937 s | **+28.70%** |
-| $c=64$ | 2180.74 | 2634.74 | **+20.82%** | 2.2712 s | 2.0341 s | **+10.44%** |
+| $c=1$ | 106.05 | 107.41 | **+1.27%** | 0.3105 s | 6.3191 s | **-1935.41%** |
+| $c=8$ | 641.68 | 742.10 | **+15.65%** | 0.6938 s | 0.6550 s | **+5.59%** |
+| $c=16$ | 1125.56 | 1272.96 | **+13.10%** | 0.8081 s | 0.8533 s | **-5.60%** |
+| $c=32$ | 1517.27 | 2105.66 | **+38.78%** | 1.3042 s | 1.0630 s | **+18.50%** |
+| $c=64$ | 2181.38 | 2620.52 | **+20.13%** | 2.3021 s | 20.5149 s | **-791.15%** |
 
 #### Table 3: Prompt Prefill Ingestion Stress ($8,192\text{ prompt tok} \to 16\text{ out}$)
-| Metric | vLLM (0.26.0) | SGLang (0.5.16-cu130) | Delta ($\Delta$) |
+| Metric | vLLM (0.25.1) | SGLang (0.5.12) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- |
-| Prefill throughput | 13001.20 prompt tok/s | 1768.00 prompt tok/s | **-86.40%** |
-| TTFT mean (ms) | 408.65 ms | 3005.09 ms | **-635.37%** |
+| Prefill throughput | 25846.71 prompt tok/s | 1526.35 prompt tok/s | **-94.09%** |
+| TTFT mean (ms) | 205.56 ms | 3480.85 ms | **-1593.37%** |
 
 #### Technical Guidance: When to Choose vLLM vs SGLang
 
-* **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 3.91 ms vs vLLM 8.48 ms) and sustained stability during 30-minute endurance soak testing.
-* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. vLLM demonstrated superior prompt ingestion throughput (13001.20 prompt tok/s vs SGLang 1768.00 prompt tok/s), making it preferable for raw long-context batch prefill without cache hits. vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.
+* **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 10.17 ms vs vLLM 23.09 ms) and sustained stability during 30-minute endurance soak testing.
+* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. vLLM demonstrated superior prompt ingestion throughput (25846.71 prompt tok/s vs SGLang 1526.35 prompt tok/s), making it preferable for raw long-context batch prefill without cache hits. vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.
 
 <!-- ENGINE_COMPARISON_END -->
 
@@ -180,9 +180,9 @@ Google Cloud Product               | Scope                                      
 **Cloud SQL for PostgreSQL**       | **Zonal** *(Default)* / **Regional** *(HA)*  | `module.database`                        | Private PostgreSQL 15 instance (`europe-north1-b`) connected via Private Services Access (`PSA`). Stores virtual API keys, user budgets, and enterprise routing rules. Upgradeable to regional HA via `availability_type = "REGIONAL"`.
 **BigQuery**                       | **Regional**                                 | `module.audit`                           | Serverless analytical dataset (`glm52_enterprise_audit.trajectories` in `europe-north1`) recording asynchronous WIF-authenticated chat completions, prompt/completion token counts, and request metadata.
 **Cloud Storage (GCS)**            | **Regional**                                 | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Regional buckets (`europe-north1`) hosting remote Terraform state locking (`gs://project-glm52-tfstate`) and fast-path pre-staged model shards (`gs://project-glm52-weights-backup/nvfp4`, ~4 GiB/s hydration).
-**Artifact Registry**              | **Regional**                                 | `module.storage`                         | Secure private container registry (`europe-north1`) storing pinned custom vLLM and SGLang Blackwell serving container images (`vllm-blackwell:v0.26.0`, `sglang-blackwell:v0.5.16-cu130`).
+**Artifact Registry**              | **Regional**                                 | `module.storage`                         | Secure private container registry (`europe-north1`) storing pinned custom vLLM and SGLang Blackwell serving container images (`vllm-blackwell:v0.25.1`, `sglang-blackwell:v0.5.12-cu130`).
 **Cloud Build**                    | **Regional**                                 | `scripts/03_deploy_workloads.sh`         | On-demand serverless container build pipeline compiling custom vLLM and SGLang runtimes from `docker/Dockerfile.vllm` and `docker/Dockerfile.sglang`.
-**Virtual Private Cloud (VPC)**    | **Global / Regional**                        | `module.network`                         | Private custom-mode VPC (`roce-net-primary`) with regional subnets (`k8s-pod-net`), Private Services Access peering, and IAP SSH firewall restrictions.
+**Virtual Private Cloud (VPC)**    | **Global / Regional**                        | `module.network`                         | Private custom-mode VPC (`glm52-net-primary`) with regional subnets (`k8s-pod-net`), Private Services Access peering, and IAP SSH firewall restrictions.
 **Managed Service for Prometheus** | **Regional**                                 | `module.observability`                   | Fully managed Google Cloud Managed Service for Prometheus (`GMP`) scraping DCGM GPU kernels (`DCGM_FI_PROF_PIPE_TENSOR_ACTIVE`) and vLLM / SGLang request queues.
 
 ---
@@ -219,28 +219,9 @@ While **1x `a4-highgpu-8g` node ($TP=8$) serves as the turnkey MVP baseline**, t
 * **Kubernetes Service Load Balancing:** Incoming inference requests to the internal service `glm52-serving-svc` are distributed across all active serving pod replicas.
 * **Shared Redis Cache:** All node replicas communicate with a centralized Cloud Memorystore Redis instance, enabling exact-match cache hits (single-digit-ms in-VPC, <50 ms verified via port-forward) across nodes.
 
-### 4. Optional: Multi-NIC Falcon RoCE Network Fabric & Jumbo Frames (MTU 8896)
-
-#### Why RoCE / Multi-NIC is NOT Required for Single-Node Serving
-
-* **Intra-Node NVLink:** The GLM-5.2 NVFP4 model is loaded onto an `a4-highgpu-8g` node using Tensor Parallelism ($TP=8$). All inter-GPU tensor synchronization (all-reduce, KV cache transfer) occurs over **5th-Gen NVLink / NVSwitch at 1.8 TB/s per GPU** (14.4 TB/s aggregate bidirectional bandwidth) inside the physical HGX B200 board.
-* **Data Parallel Scale-Out ($DP=N$):** Scaling horizontally across nodes creates independent model replicas. Replicas never exchange tensor data; incoming user queries are standard HTTP/gRPC requests routed by the LiteLLM gateway over standard **gVNIC (MTU 1500)**.
-* **GCP MTU Limits:** GCP VPC subnets support MTU 1500 (or max 8896 for A4 secondary interfaces). Standard Ethernet MTU 9000 is not a supported VPC parameter on Google Cloud.
-
-#### How to Enable Multi-NIC RoCE (For Multi-Node TP > 8 or Distributed Training)
-If extending this codebase to multi-node distributed training or serving ultra-large models requiring Multi-Host Tensor Parallelism ($TP > 8$ or $PP > 1$):
-
-1. Enable the Multi-NIC feature flag in `terraform.tfvars`:
-
-    ```hcl
-    enable_roce_multinic = true
-    ```
-2. Uncomment the secondary RoCE network resources in `terraform/modules/network/main.tf` and `terraform/modules/node_pool_spot/main.tf`.
-3. Apply the updated Terraform plan to provision 8 dedicated secondary subnets (`MTU 8896`) and attach them to the B200 Titanium NIC interfaces.
-
 ---
 
-### 5. Capacity Derivations
+### 4. Capacity Derivations
 
 For a cluster scaled out to $N$ active `a4-highgpu-8g` nodes ($DP=N$, $TP=8$):
 
@@ -283,18 +264,20 @@ glm-5.2-gcp-enterprise-serving/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                 # Automated static checks (Terraform, ShellCheck, Python, Kubeconform)
+├── .gitignore                     # Git ignore patterns (excluding local state, generated manifests, results)
 ├── LICENSE                        # Apache-2.0 License
 ├── README.md                      # Executive overview and operational documentation (this file)
 ├── benchmarks/                    # Synthetic load testing and stress benchmark Python suites
+│   ├── .gitignore                 # Git ignore rules excluding generated JSON results and logs
 │   ├── benchmark_glm52.py         # Standard enterprise performance benchmark (TTFT, TPOT, Throughput)
 │   ├── massive_benchmark_glm52.py # High-concurrency stress test simulating 20 autonomous agent streams
 │   ├── run_prefill_benchmark.py   # Empirical prompt-ingestion prefill benchmark (8k-in/16-out prompt tok/s)
 │   ├── run_saturation_sweep.py    # Direct engine saturation sweep across concurrency levels c=1..64
 │   ├── soak_benchmark_glm52.py    # 30-minute continuous stability endurance test (1,800 seconds)
-│   ├── generate_comparison.py     # Automated parity validator and ENGINE_COMPARISON.md generator
+│   ├── generate_comparison.py     # Automated parity validator and README.md comparison table generator
 ├── docker/                        # Container definitions for custom serving runtimes
-│   ├── Dockerfile.vllm            # Pinned vLLM Blackwell serving container image definition (v0.26.0)
-│   ├── Dockerfile.sglang          # Pinned SGLang Blackwell B200 serving container image (v0.5.16-cu130)
+│   ├── Dockerfile.vllm            # Pinned vLLM Blackwell serving container image definition (v0.25.1)
+│   ├── Dockerfile.sglang          # Pinned SGLang Blackwell B200 serving container image (v0.5.12-cu130)
 │   └── cloudbuild.yaml            # Cloud Build configuration supporting dynamic image/Dockerfile substitutions
 ├── scripts/                       # Automated lifecycle Bash & Python scripts
 │   ├── config.env.example         # Template configuration for environment variables, engine knob, and tags
@@ -324,6 +307,8 @@ glm-5.2-gcp-enterprise-serving/
     │   ├── gateway_iam/           # Workload Identity SA bindings for proxy database and audit access
     │   └── observability/         # Google Cloud Managed Service for Prometheus (GMP) dashboard configurations
     └── manifests/
+        ├── schemas/               # Vendored OpenAPIV3 JSON schemas for CI validation
+        │   └── podmonitoring_v1.json # OpenAPIV3 schema for Managed Prometheus PodMonitoring CRD
         ├── templates/             # Parameterized .template manifests for automated rendering
         │   ├── 00-local-nvme-raid.yaml.template
         │   ├── 01-rbac-wif.yaml.template
@@ -334,7 +319,9 @@ glm-5.2-gcp-enterprise-serving/
         │   ├── 03-sglang-spot-serving.yaml.template
         │   ├── 04-enterprise-gateway-config.yaml.template
         │   ├── 05-enterprise-gateway-deployment.yaml.template
-        │   └── 06-model-observability-podmonitoring.yaml.template
+        │   ├── 06-model-observability-podmonitoring.yaml.template
+        │   ├── 07-hpa.yaml.template
+        │   └── 08-in-cluster-benchmark-job.yaml.template
         └── generated/             # Rendered runtime Kubernetes YAML manifests applied to GKE
 ```
 
@@ -394,7 +381,7 @@ Run the setup script to verify prerequisite CLI dependencies, check GKE RBAC pri
 ```
 
 ### Step 4: Provision Infrastructure via Terraform
-Execute Phase 1 & 2 to build the private VPC network, GKE cluster, Blackwell Spot node pools, Cloud SQL PostgreSQL instance, Cloud Memorystore Redis, BigQuery dataset, and 1,000 GB Hyperdisk ML volume:
+Execute the infrastructure deployment script to build the private VPC network, GKE cluster, Blackwell Spot node pools, Cloud SQL PostgreSQL instance, Cloud Memorystore Redis, BigQuery dataset, and 1,000 GB Hyperdisk ML volume:
 
 ```bash
 ./scripts/02_deploy_infra.sh
@@ -402,7 +389,7 @@ Execute Phase 1 & 2 to build the private VPC network, GKE cluster, Blackwell Spo
 *Note: `02_deploy_infra.sh` checks for pre-existing state in `gs://${TF_STATE_BUCKET}` and warns if existing tracked resources are detected.*
 
 ### Step 5: Render Manifests & Deploy Workloads
-Execute Phase 3 to render Kubernetes templates, format local NVMe scratch disks in RAID 0 via DaemonSet, run the weight staging job, launch the selected inference serving engine (`vLLM` or `SGLang`), and deploy the **Enterprise AI Gateway** on internal port `4000`:
+Execute the workload deployment script to render Kubernetes templates, format local NVMe scratch disks in RAID 0 via DaemonSet, run the weight staging job, launch the selected inference serving engine (`vLLM` or `SGLang`), and deploy the **Enterprise AI Gateway** on internal port `4000`:
 
 ```bash
 ./scripts/03_deploy_workloads.sh
@@ -434,7 +421,7 @@ For quick smoke tests from your local workstation via automatic port-forward:
 ```
 *Note: Benchmark scripts detect port-forward tunnel drops (HTTP 000) and fail fast with actionable guidance to switch to `--in-cluster` mode.*
 
-#### 🔬 Direct Engine Saturation Sweep & Prefill Benchmarking (Phase 4)
+#### 🔬 Direct Engine Saturation Sweep & Prefill Benchmarking
 
 To run cache-bypassed direct GPU generation saturation sweeps across concurrency
 levels ($c \in \{1, 8, 16, 32, 64\}$) or evaluate prompt prefill ingestion rate
@@ -461,8 +448,8 @@ python3 benchmarks/run_saturation_sweep.py
 ### Enabling Horizontal Pod Autoscaling (HPA)
 Automated pod autoscaling is enabled by setting `ENABLE_HPA="true"` in `scripts/config.env`. HPA scales the serving deployment up to `GPU_MAX_NODES` based on custom vLLM / SGLang queue depth:
 
-* **Metric:** `prometheus.googleapis.com|vllm:num_requests_waiting|gauge` (Target: 16 waiting requests)
-* **Metric:** `prometheus.googleapis.com|vllm:num_requests_running|gauge` (Target: 20 running requests)
+* **vLLM Metrics:** `prometheus.googleapis.com|vllm:num_requests_waiting|gauge` (Target: 16 waiting) / `prometheus.googleapis.com|vllm:num_requests_running|gauge` (Target: 20 running)
+* **SGLang Metrics:** `prometheus.googleapis.com|sglang:num_queue_reqs|gauge` (Target: 16 waiting) / `prometheus.googleapis.com|sglang:num_running_reqs|gauge` (Target: 20 running)
 
 ---
 
