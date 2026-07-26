@@ -1,0 +1,216 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-glm52-weights-rox
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 1000Gi
+  accessModes:
+    - ReadOnlyMany
+  mountOptions:
+    - nouuid
+    - ro
+    - norecovery
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/${PROJECT_ID}/zones/${ZONE}/disks/glm-52-weights-rox
+    fsType: xfs
+    readOnly: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-glm52-weights-rox
+  namespace: llm-serving
+spec:
+  storageClassName: ""
+  volumeName: pv-glm52-weights-rox
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 1000Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: glm52-serving-svc
+  namespace: llm-serving
+  labels:
+    app: glm52-serving
+    env: ${ENV_LABEL}
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http-inference
+  selector:
+    app: glm52-serving
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glm52-nvfp4-serving
+  namespace: llm-serving
+  labels:
+    app: glm52-serving
+    app.kubernetes.io/name: vllm
+    ai.gke.io/model: "glm-5.2-moe"
+    ai.gke.io/inference-server: "vllm"
+    env: ${ENV_LABEL}
+    owner: ${OWNER_LABEL}
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: glm52-serving
+  template:
+    metadata:
+      labels:
+        app: glm52-serving
+        app.kubernetes.io/name: vllm
+        ai.gke.io/model: "glm-5.2-moe"
+        ai.gke.io/inference-server: "vllm"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: glm52-vllm-sa
+      terminationGracePeriodSeconds: 120
+      hostNetwork: true
+      hostIPC: true
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        cloud.google.com/gke-spot: "true"
+      initContainers:
+      - name: wait-for-nvme-raid
+        image: google/cloud-sdk:slim
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Waiting for local NVMe scratch RAID array to be mounted at /mnt/scratch..."
+          until [ -f /mnt/scratch/.mounted ]; do
+            echo "Waiting for /mnt/scratch/.mounted..."
+            sleep 2
+          done
+          echo "Local NVMe scratch RAID is mounted and ready."
+        volumeMounts:
+        - name: local-nvme-scratch
+          mountPath: /mnt/scratch
+          mountPropagation: HostToContainer
+      containers:
+      - name: vllm-engine
+        image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.25.1
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          trap 'echo "Spot preemption received! Draining requests within 25s budget..."; sleep 20; exit 0' SIGTERM
+          
+          export CUDA_HOME=/usr/local/cuda
+          export PATH=/usr/local/cuda/bin:${PATH}
+          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}
+          
+          exec python3 -m vllm.entrypoints.openai.api_server \
+              --model=/mnt/hyperdisk-ml \
+              --tensor-parallel-size=8 \
+              --pipeline-parallel-size=1 \
+              --served-model-name=glm-5.2-moe \
+              --port=8000 \
+              --kv-cache-dtype=auto \
+              --enable-prefix-caching \
+              --enable-chunked-prefill \
+              --max-num-seqs=64 \
+              --max-num-batched-tokens=8192 \
+              --max-model-len=131072 \
+              --gpu-memory-utilization=0.94
+        
+        env:
+        - name: CUDA_HOME
+          value: "/usr/local/cuda"
+        - name: PATH
+          value: "/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/cuda/lib64:/usr/local/nvidia/lib64"
+        - name: CUDA_DEVICE_MAX_CONNECTIONS
+          value: "1"
+        - name: VLLM_LOGGING_LEVEL
+          value: "INFO"
+        
+        resources:
+          limits:
+            nvidia.com/gpu: "8"
+            memory: "1000Gi"
+            cpu: "180"
+          requests:
+            nvidia.com/gpu: "8"
+            memory: "1000Gi"
+            cpu: "180"
+            
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+            
+        volumeMounts:
+        - name: nvidia-libs
+          mountPath: /usr/local/nvidia/lib64
+          readOnly: true
+        - name: hyperdisk-ml-weights
+          mountPath: /mnt/hyperdisk-ml
+          readOnly: true
+        - name: local-nvme-scratch
+          mountPath: /mnt/scratch
+          mountPropagation: HostToContainer
+        - name: dshm
+          mountPath: /dev/shm
+          
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 2400
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 30
+
+      volumes:
+      - name: nvidia-libs
+        hostPath:
+          path: /home/kubernetes/bin/nvidia/lib64
+      - name: hyperdisk-ml-weights
+        persistentVolumeClaim:
+          claimName: pvc-glm52-weights-rox
+          readOnly: true
+      - name: local-nvme-scratch
+        hostPath:
+          path: /mnt/disks/local-scratch
+          type: DirectoryOrCreate
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Gi
