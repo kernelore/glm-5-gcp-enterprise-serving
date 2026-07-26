@@ -142,6 +142,13 @@ echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DI
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
+    case "${basename}" in
+      03-*-spot-serving.yaml)
+        if [ "${basename}" != "03-${INFERENCE_ENGINE}-spot-serving.yaml" ]; then
+          continue
+        fi
+        ;;
+    esac
     target_file="${GENERATED_DIR}/${basename}"
     echo "    Rendering ${basename}..."
     # shellcheck disable=SC2016

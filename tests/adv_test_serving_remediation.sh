@@ -78,11 +78,21 @@ else
   CLEANUP_CONFIG_ENV=false
 fi
 ./scripts/03_deploy_workloads.sh --render-only >/dev/null
+if [ -f "terraform/manifests/generated/03-sglang-spot-serving.yaml" ]; then
+  echo "ERROR: Check 4 failed: Non-selected engine manifest 03-sglang-spot-serving.yaml is present in generated/ when INFERENCE_ENGINE is vllm!" >&2
+  exit 1
+fi
+INFERENCE_ENGINE=sglang ./scripts/03_deploy_workloads.sh --render-only >/dev/null
+if [ -f "terraform/manifests/generated/03-vllm-spot-serving.yaml" ]; then
+  echo "ERROR: Check 4 failed: Non-selected engine manifest 03-vllm-spot-serving.yaml is present in generated/ when INFERENCE_ENGINE is sglang!" >&2
+  exit 1
+fi
+INFERENCE_ENGINE=vllm ./scripts/03_deploy_workloads.sh --render-only >/dev/null
 kubeconform -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml
 if [ "${CLEANUP_CONFIG_ENV}" = "true" ]; then
   rm -f scripts/config.env
 fi
-echo "    [OK] Check 4 passed: All rendered manifests passed kubeconform schema validation."
+echo "    [OK] Check 4 passed: All rendered manifests passed kubeconform schema validation and non-selected engine templates were excluded."
 
 # ------------------------------------------------------------------------------
 # Check 5: Clean execution of benchmarks/generate_comparison.py & zero diff
@@ -296,6 +306,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 echo "    [OK] Check 12 passed: Engine version coupling and fail-closed parsing verified against synthetic deploy scripts."
 
 echo "--> Check 13: Verifying rendered manifest tags against deploy script pins..."
+# shellcheck disable=SC2016
 python3 -c '
 import sys, tempfile, shutil, os
 from pathlib import Path
@@ -358,6 +369,24 @@ with tempfile.TemporaryDirectory() as tmpdir:
             print(f"ERROR: Expected PROVENANCE GATE FAILURE for missing image line, got: {e}", file=sys.stderr)
             sys.exit(1)
         print(f"    [OK] Case 3 (Missing Image Line) passed: Caught expected fail-closed error: {e}")
+
+    # Case 4: Swap IMAGE_NAME to sglang-blackwell inside vLLM branch -> must fail repo check
+    for tf in Path("terraform/manifests/templates").glob("*.template"):
+        shutil.copy(tf, templates_dir / tf.name)
+    repo_swap_content = real_content.replace("IMAGE_NAME=\"vllm-blackwell\"", "IMAGE_NAME=\"sglang-blackwell\"")
+    if repo_swap_content == real_content:
+        print("ERROR: Failed to swap IMAGE_NAME in temporary script!", file=sys.stderr)
+        sys.exit(1)
+    tmp_script.write_text(repo_swap_content, encoding="utf-8")
+    try:
+        validate_rendered_manifests(str(tmp_script))
+        print("ERROR: validate_rendered_manifests() failed to catch swapped IMAGE_NAME!", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        if "PROVENANCE GATE FAILURE" not in str(e) or "does not end with expected" not in str(e) or "vllm-blackwell" not in str(e):
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE for repository name mismatch, got: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"    [OK] Case 4 (Swapped Repo Name) passed: Caught expected fail-closed error: {e}")
 '
 echo "    [OK] Check 13 passed: Rendered manifest tag verification and fail-closed absence checks verified."
 

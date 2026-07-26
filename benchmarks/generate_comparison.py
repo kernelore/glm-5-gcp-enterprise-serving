@@ -127,6 +127,11 @@ def validate_rendered_manifests(deploy_script_path: str = "scripts/03_deploy_wor
             if not manifest_file.exists():
                 raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} missing after --render-only for {eng}")
             
+            other_eng = "sglang" if eng == "vllm" else "vllm"
+            other_manifest = gen_dir / f"03-{other_eng}-spot-serving.yaml"
+            if other_manifest.exists():
+                raise ValueError(f"PROVENANCE GATE FAILURE: Non-selected engine manifest {other_manifest.name} should not be present in generated/ after --render-only for {eng}")
+            
             content = manifest_file.read_text(encoding="utf-8")
             image_lines = [m for m in re.findall(r'^\s*image:\s*([^\s#]+)', content, re.MULTILINE) if "blackwell" in m]
             if not image_lines:
@@ -135,7 +140,11 @@ def validate_rendered_manifests(deploy_script_path: str = "scripts/03_deploy_wor
             for img in image_lines:
                 if ":" not in img:
                     raise ValueError(f"PROVENANCE GATE FAILURE: Rendered image URI '{img}' missing tag in {manifest_name}")
-                tag = img.split(":")[-1]
+                repo_path = img.rsplit(":", 1)[0]
+                expected_suffix = f"{eng}-blackwell"
+                if not repo_path.endswith(expected_suffix):
+                    raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} repository '{repo_path}' does not end with expected '{expected_suffix}'")
+                tag = img.rsplit(":", 1)[-1]
                 norm_tag = normalize_version(tag)
                 if norm_tag != pins[eng]:
                     raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} image tag '{norm_tag}' (from '{tag}') does not match deploy pin '{pins[eng]}'")
