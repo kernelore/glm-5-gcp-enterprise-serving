@@ -51,7 +51,7 @@ sys.stdout.write(output)
 }
 
 echo "=============================================================================="
-echo "GLM-5.2 Sovereign Enterprise Inference - Phase 3: Workload Deployment"
+echo "GLM-5.2 Sovereign Enterprise Inference - Workload Deployment"
 echo "=============================================================================="
 echo "Target Cluster: ${CLUSTER_NAME} (${ZONE})"
 echo "=============================================================================="
@@ -114,28 +114,20 @@ export VLLM_VIP="glm52-serving-svc.llm-serving.svc.cluster.local"
 export SERVING_VIP="${VLLM_VIP}"
 export INFERENCE_ENGINE="${INFERENCE_ENGINE:-vllm}"
 export INFERENCE_SERVER_LABEL="${INFERENCE_ENGINE}"
-VLLM_DEFAULT_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.26.0"
-SGLANG_DEFAULT_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/sglang-blackwell:v0.5.16-cu130"
-
 if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
   export HPA_QUEUE_METRIC="sglang:num_queue_reqs|gauge"
   export HPA_RUNNING_METRIC="sglang:num_running_reqs|gauge"
   IMAGE_NAME="sglang-blackwell"
-  IMAGE_TAG="v0.5.16-cu130"
+  IMAGE_TAG="v0.5.12-cu130"
   DOCKERFILE="Dockerfile.sglang"
-  export SERVING_IMAGE="${SERVING_IMAGE:-${SGLANG_DEFAULT_IMAGE}}"
-  export SGLANG_SERVING_IMAGE="${SERVING_IMAGE}"
-  export VLLM_SERVING_IMAGE="${VLLM_DEFAULT_IMAGE}"
 else
   export HPA_QUEUE_METRIC="vllm:num_requests_waiting|gauge"
   export HPA_RUNNING_METRIC="vllm:num_requests_running|gauge"
   IMAGE_NAME="vllm-blackwell"
-  IMAGE_TAG="v0.26.0"
+  IMAGE_TAG="v0.25.1"
   DOCKERFILE="Dockerfile.vllm"
-  export SERVING_IMAGE="${SERVING_IMAGE:-${VLLM_DEFAULT_IMAGE}}"
-  export VLLM_SERVING_IMAGE="${SERVING_IMAGE}"
-  export SGLANG_SERVING_IMAGE="${SGLANG_DEFAULT_IMAGE}"
 fi
+export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/${IMAGE_NAME}:${IMAGE_TAG}"
 export BENCHMARK_MODE="${BENCHMARK_MODE:-soak}"
 export BENCHMARK_CONCURRENCY="${BENCHMARK_CONCURRENCY:-18}"
 export BENCHMARK_REQUESTS="${BENCHMARK_REQUESTS:-16}"
@@ -150,7 +142,7 @@ for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
     target_file="${GENERATED_DIR}/${basename}"
     echo "    Rendering ${basename}..."
     # shellcheck disable=SC2016
-    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${HPA_QUEUE_METRIC} ${HPA_RUNNING_METRIC} ${SERVING_IMAGE} ${VLLM_SERVING_IMAGE} ${SGLANG_SERVING_IMAGE} ${SERVING_VIP} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA}' < "${template_file}" > "${target_file}"
+    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${HPA_QUEUE_METRIC} ${HPA_RUNNING_METRIC} ${SERVING_IMAGE} ${SERVING_VIP} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA}' < "${template_file}" > "${target_file}"
   fi
 done
 echo "    [OK] All manifest templates rendered cleanly."
@@ -179,8 +171,10 @@ fi
 
 # 3. Apply base cluster resources (NVMe RAID formatter & RBAC/WIF/Secret)
 echo "--> 3. Applying Base Infrastructure DaemonSet & Workload Identity RBAC..."
-kubectl apply -f "${GENERATED_DIR}/00-local-nvme-raid.yaml"
-kubectl apply -f "${GENERATED_DIR}/01-rbac-wif.yaml"
+# --validate=warn keeps server-side field validation (typos in manifests are surfaced as
+# warnings) without failing scripted applies on transient OpenAPI schema discovery timeouts.
+kubectl apply --validate=warn -f "${GENERATED_DIR}/00-local-nvme-raid.yaml"
+kubectl apply --validate=warn -f "${GENERATED_DIR}/01-rbac-wif.yaml"
 
 echo "--> 4. Waiting for local-nvme-raid-formatter DaemonSet rollout..."
 kubectl rollout status daemonset/local-nvme-raid-formatter -n kube-system --timeout=180s || echo "WARNING: DaemonSet rollout timeout (may be waiting for spot nodes to register)."
@@ -226,16 +220,16 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
     kubectl delete pv pv-glm52-weights-staging --ignore-not-found=true
 
     echo "--> Applying staging PV and PVC (ReadWriteOnce)..."
-    kubectl apply -f "${GENERATED_DIR}/02-staging-pvc.yaml"
+    kubectl apply --validate=warn -f "${GENERATED_DIR}/02-staging-pvc.yaml"
 
     if [ -n "${GCS_WEIGHTS_BUCKET:-}" ] && [ "${GCS_WEIGHTS_BUCKET}" != "" ] && [ "${POPULATE_WEIGHTS_CACHE:-false}" != "true" ] && [ -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml" ]; then
       echo "--> 5b. Hydrating GLM-5.2 NVFP4 weights directly from GCS (${GCS_WEIGHTS_BUCKET})..."
       echo "    NOTE: High-throughput transfer from GCS runs at multi-GiB/s (~2 minutes total)."
-      kubectl apply -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml"
+      kubectl apply --validate=warn -f "${GENERATED_DIR}/02-hydrate-weights-gcs.yaml"
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=glm52-weight-staging -f"
     else
       echo "--> 5b. Applying GLM-5.2 weight staging job from Hugging Face (${GENERATED_DIR}/02-download-weights.yaml)..."
-      kubectl apply -f "${GENERATED_DIR}/02-download-weights.yaml"
+      kubectl apply --validate=warn -f "${GENERATED_DIR}/02-download-weights.yaml"
       echo "    NOTE: Hugging Face download takes ~10 min via HF Xet (~1 GB/s)."
       echo "    You can check job logs using: kubectl logs -n llm-serving -l app=glm52-weight-staging -f"
     fi
@@ -303,22 +297,23 @@ else
   SERVING_MANIFEST="03-vllm-spot-serving.yaml"
   echo "--> 6. Applying vLLM Blackwell serving engine deployment (${GENERATED_DIR}/${SERVING_MANIFEST})..."
 fi
-kubectl apply -f "${GENERATED_DIR}/${SERVING_MANIFEST}"
+kubectl apply --validate=warn -f "${GENERATED_DIR}/${SERVING_MANIFEST}"
 
 # 6. Deploy Enterprise AI Gateway & Proxy Layer
 echo "--> 7. Applying Enterprise AI Gateway ConfigMap, Secret, and Deployment..."
-kubectl apply -f "${GENERATED_DIR}/04-enterprise-gateway-config.yaml"
-kubectl apply -f "${GENERATED_DIR}/05-enterprise-gateway-deployment.yaml"
+kubectl apply --validate=warn -f "${GENERATED_DIR}/04-enterprise-gateway-config.yaml"
+kubectl apply --validate=warn -f "${GENERATED_DIR}/05-enterprise-gateway-deployment.yaml"
 if [ -f "${GENERATED_DIR}/06-model-observability-podmonitoring.yaml" ]; then
   echo "    Applying GKE AI/ML Model Observability PodMonitoring resource..."
   kubectl delete podmonitoring -l app=glm52-serving -n llm-serving 2>/dev/null || true
-  kubectl apply -f "${GENERATED_DIR}/06-model-observability-podmonitoring.yaml" 2>/dev/null || true
+  kubectl apply --validate=warn -f "${GENERATED_DIR}/06-model-observability-podmonitoring.yaml" 2>/dev/null || true
 fi
 
 # 7. Optional HPA & Custom Metrics Stackdriver Adapter
 if [ "${ENABLE_HPA:-false}" = "true" ] || [ "${ENABLE_HPA:-false}" = "1" ]; then
   echo "--> 8. Enabling Horizontal Pod Autoscaler (HPA) and Custom Metrics Stackdriver Adapter..."
-  kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/master/custom-metrics-stackdriver-adapter/deploy/production/adapter_new_resource_model.yaml
+  # Pinned to cm-sd-adapter-v0.16.6 (replacing floating master and older v0.14.3). Older adapter releases (like v0.14.3) lacked full Managed Service for Prometheus (GMP) support and failed to resolve SGLang custom metrics or metric suffixes like /gauge and /unknown, leading to <unknown> HPA values.
+  kubectl apply --validate=warn -f https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/cm-sd-adapter-v0.16.6/custom-metrics-stackdriver-adapter/deploy/production/adapter_new_resource_model.yaml
   if command -v gcloud >/dev/null 2>&1; then
     gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
       --member="serviceAccount:${PROJECT_ID}.svc.id.goog[custom-metrics/custom-metrics-stackdriver-adapter]" \
@@ -326,7 +321,7 @@ if [ "${ENABLE_HPA:-false}" = "true" ] || [ "${ENABLE_HPA:-false}" = "1" ]; then
   fi
   if [ -f "${GENERATED_DIR}/07-hpa.yaml" ]; then
     echo "    Applying HPA resource (${GENERATED_DIR}/07-hpa.yaml)..."
-    kubectl apply -f "${GENERATED_DIR}/07-hpa.yaml"
+    kubectl apply --validate=warn -f "${GENERATED_DIR}/07-hpa.yaml"
   fi
 else
   echo "--> 8. HPA disabled (ENABLE_HPA=${ENABLE_HPA:-false}). Relying on manual scaling and scheduled CronJobs."

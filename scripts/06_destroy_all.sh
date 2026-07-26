@@ -25,7 +25,7 @@ source "${CONFIG_FILE}"
 echo "=============================================================================="
 echo "GLM-5.2 Sovereign Enterprise Inference - COMPLETE TEARDOWN & DESTROY"
 echo "=============================================================================="
-echo "WARNING: This will destroy the GKE cluster, PVCs, VPC RoCE network, and"
+echo "WARNING: This will destroy the GKE cluster, PVCs, VPC network, and"
 echo "Terraform-managed storage buckets in project ${PROJECT_ID}."
 echo "=============================================================================="
 

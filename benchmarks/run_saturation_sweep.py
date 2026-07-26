@@ -63,6 +63,8 @@ def execute_single_request(
   t_first_token = None
   token_timestamps = []
   generated_tokens = 0
+  has_exact_usage = False
+  chunk_count = 0
 
   try:
     with urllib.request.urlopen(req, timeout=300) as resp:
@@ -73,23 +75,37 @@ def execute_single_request(
         data_str = decoded[6:]
         if data_str == "[DONE]":
           break
+        chunk_count += 1
         try:
           chunk = json.loads(data_str)
-          if (
-              "choices" in chunk
-              and chunk["choices"]
-              and "text" in chunk["choices"][0]
-          ):
-            txt = chunk["choices"][0].get("text")
-            if txt is not None and len(txt) > 0:
-              now = time.time()
-              if t_first_token is None:
-                t_first_token = now
-              token_timestamps.append(now)
-              generated_tokens += 1
-          elif "usage" in chunk and chunk["usage"]:
-            if chunk["usage"].get("completion_tokens"):
-              generated_tokens = chunk["usage"]["completion_tokens"]
+          usage = chunk.get("usage")
+          if usage and isinstance(usage, dict) and "completion_tokens" in usage and usage["completion_tokens"] is not None:
+            generated_tokens = int(usage["completion_tokens"])
+            has_exact_usage = True
+
+          choices = chunk.get("choices", [])
+          if choices:
+            choice = choices[0]
+            if isinstance(choice, dict):
+              delta = choice.get("delta", {})
+              if not isinstance(delta, dict):
+                delta = {}
+              text_val = choice.get("text")
+              content_val = delta.get("content")
+              reasoning_val = delta.get("reasoning_content")
+              
+              has_content = (
+                  (text_val is not None and text_val != "") or 
+                  (content_val is not None and content_val != "") or 
+                  (reasoning_val is not None and reasoning_val != "")
+              )
+              if has_content:
+                now = time.time()
+                if t_first_token is None:
+                  t_first_token = now
+                token_timestamps.append(now)
+                if not has_exact_usage:
+                  generated_tokens += 1
         except Exception:
           pass
     t_end = time.time()
@@ -113,11 +129,12 @@ def execute_single_request(
         "mean_tpot_ms": mean_tpot,
         "all_tpots_ms": tpots,
         "tokens": generated_tokens,
+        "token_count_source": "usage" if has_exact_usage else "chunk_count_fallback",
         "duration": duration,
         "throughput": throughput,
     }
   except Exception as e:
-    return {"success": False, "error": str(e)}
+    return {"success": False, "error": f"{str(e)} (tok={generated_tokens}, ttft={'set' if t_first_token else 'None'}, chunks={chunk_count})"}
 
 
 def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens):
@@ -162,11 +179,20 @@ def run_sweep_concurrency(c, requests_per_c, endpoint, model, max_tokens):
       idx = int(len(arr) * p / 100.0)
       return arr[min(idx, len(arr) - 1)]
 
+    sources_used = sorted(list(set(r.get("token_count_source", "unknown") for r in successful)))
+    if len(sources_used) == 1:
+        agg_source = sources_used[0]
+    elif len(sources_used) > 1:
+        agg_source = "mixed: " + ", ".join(sources_used)
+    else:
+        agg_source = "none"
+
     summary = {
         "concurrency": c,
         "requests": len(results),
         "successful": len(successful),
         "error_rate_pct": err_rate,
+        "token_count_source": agg_source,
         "total_tokens": total_tokens,
         "total_duration_sec": total_duration,
         "aggregate_tok_s": agg_tok_s,

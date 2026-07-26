@@ -116,8 +116,8 @@ spec:
           mountPropagation: HostToContainer
       containers:
       - name: sglang-engine
-        image: ${SGLANG_SERVING_IMAGE}
-        imagePullPolicy: Always
+        image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/sglang-blackwell:v0.5.12-cu130
+        imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c"]
         args:
         - |

@@ -10,7 +10,6 @@ import concurrent.futures
 import json
 import os
 import statistics
-import sys
 import time
 import urllib.request
 import urllib.error
@@ -89,19 +88,32 @@ def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperat
                 try:
                     chunk = json.loads(data_part)
                     usage = chunk.get("usage")
-                    if usage and isinstance(usage, dict) and "completion_tokens" in usage:
-                        tokens_received = usage.get("completion_tokens", tokens_received)
+                    if usage and isinstance(usage, dict) and "completion_tokens" in usage and usage["completion_tokens"] is not None:
+                        tokens_received = int(usage["completion_tokens"])
                         has_exact_usage = True
                     
                     choices = chunk.get("choices", [])
                     if choices:
                         choice = choices[0]
                         if isinstance(choice, dict):
-                            now = time.perf_counter()
-                            if t_first_token is None:
-                                t_first_token = now
-                            if not has_exact_usage:
-                                tokens_received += 1
+                            delta = choice.get("delta", {})
+                            if not isinstance(delta, dict):
+                                delta = {}
+                            text_val = choice.get("text")
+                            content_val = delta.get("content")
+                            reasoning_val = delta.get("reasoning_content")
+                            
+                            has_content = (
+                                (text_val is not None and text_val != "") or 
+                                (content_val is not None and content_val != "") or 
+                                (reasoning_val is not None and reasoning_val != "")
+                            )
+                            if has_content:
+                                now = time.perf_counter()
+                                if t_first_token is None:
+                                    t_first_token = now
+                                if not has_exact_usage:
+                                    tokens_received += 1
                 except json.JSONDecodeError:
                     continue
         t_end = time.perf_counter()
@@ -129,6 +141,7 @@ def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperat
         "success": success,
         "error": error_msg,
         "tokens": tokens_received,
+        "token_count_source": "usage" if has_exact_usage else "chunk_count_fallback",
         "ttft_ms": ttft * 1000,
         "tpot_ms": tpot * 1000,
         "total_time_s": total_time,
@@ -151,7 +164,7 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as executor:
         futures = []
         for i in range(args.requests):
-            prompt = ENTERPRISE_PROMPTS[i % len(ENTERPRISE_PROMPTS)]
+            prompt = f"{ENTERPRISE_PROMPTS[i % len(ENTERPRISE_PROMPTS)]}\n\n[Benchmark Req-{i+1}-{time.time_ns()}]"
             futures.append(executor.submit(execute_stream_request, i+1, args.endpoint, args.model, prompt, args.max_tokens, args.temperature, args.api_key))
         
         consecutive_errors = 0
@@ -185,10 +198,19 @@ def main():
     tpot_mean = round(statistics.mean(tpot_vals), 2) if tpot_vals else 0.0
     throughput_tps = round(cluster_throughput, 2)
 
+    sources_used = sorted(list(set(r.get("token_count_source", "unknown") for r in successful_results)))
+    if len(sources_used) == 1:
+        agg_source = sources_used[0]
+    elif len(sources_used) > 1:
+        agg_source = "mixed: " + ", ".join(sources_used)
+    else:
+        agg_source = "none"
+
     summary = {
         "successful_requests": len(successful_results),
         "total_requests": args.requests,
         "total_completed": len(successful_results),
+        "token_count_source": agg_source,
         "ttft_mean_ms": ttft_mean,
         "tpot_mean_ms": tpot_mean,
         "throughput_tokens_sec": throughput_tps,
@@ -198,6 +220,7 @@ def main():
             "successful_requests": len(successful_results),
             "failed_requests": len(failed_results),
             "total_benchmark_time_seconds": round(total_bench_time, 3),
+            "token_count_source": agg_source,
         },
         "metrics": {}
     }

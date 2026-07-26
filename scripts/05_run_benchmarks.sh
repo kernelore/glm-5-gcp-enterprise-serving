@@ -5,7 +5,7 @@
 # Executes standard and/or massive concurrency performance benchmarks against the
 # Enterprise AI Gateway (port 4000) or directly against the vLLM serving engine (port 8000).
 # Automatically establishes a secure kubectl port-forward if running externally outside
-# the private RoCE VPC network.
+# the private VPC network.
 # ==============================================================================
 
 set -euo pipefail
@@ -38,11 +38,13 @@ Usage: $0 [OPTIONS]
 Execute GLM-5.2 performance benchmarks against the GKE serving stack.
 
 Options:
-  --mode <standard|massive|soak|all>  Benchmark suite to run (default: all)
-                                   - standard: 8 concurrent requests, 128 tokens
-                                   - massive:  20 concurrent requests, 256 tokens (stress test)
-                                   - soak:     30-minute continuous stability endurance test
-                                   - all:      Run standard, massive, and soak suites sequentially
+  --mode <standard|massive|soak|saturation|prefill|all>  Benchmark suite to run (default: all)
+                                   - standard:   8 concurrent requests, 128 tokens
+                                   - massive:    20 concurrent requests, 256 tokens (stress test)
+                                   - soak:       30-minute continuous stability endurance test
+                                   - saturation: Concurrency sweep (1, 8, 16, 32, 64) to find latency/throughput saturation points
+                                   - prefill:    Prompt ingestion stress test (8192 prompt tokens in / 16 out)
+                                   - all:        Run standard, massive, soak, saturation, and prefill suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
                                    - serving: Direct Serving Engine backend (port 8000) bypassing gateway
@@ -166,12 +168,14 @@ RESULT_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
 mkdir -p "${RESULT_DIR}"
 
 IMAGE=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
+IMAGE="${IMAGE/${PROJECT_ID}/YOUR_PROJECT_ID}"
+IMAGE=$(echo "${IMAGE}" | sed -E 's|docker\.pkg\.dev/[^/]+|docker.pkg.dev/YOUR_PROJECT_ID|g')
 FLAGS=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null || echo "[]")
 RUN_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 if [ "${ENGINE}" = "sglang" ]; then
-  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c sglang-engine -- python3 -c "import sglang; print(sglang.__version__)" 2>/dev/null || echo "0.5.16-cu130")
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c sglang-engine -- python3 -c "import sglang; print(sglang.__version__)" 2>/dev/null || echo "0.5.12-cu130")
 else
-  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c vllm-engine -- python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "0.26.0")
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c vllm-engine -- python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "0.25.1")
 fi
 METADATA_JSON=$(python3 -c 'import json, sys; print(json.dumps({"engine": sys.argv[1], "engine_version": sys.argv[2], "image": sys.argv[3], "launch_flags": sys.argv[4], "run_timestamp": sys.argv[5], "runs": 1}))' "${ENGINE}" "${ENGINE_VER}" "${IMAGE}" "${FLAGS}" "${RUN_TS}")
 
@@ -191,7 +195,9 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     --from-file="${PROJECT_ROOT}/benchmarks/run_saturation_sweep.py" \
     --from-file="${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" \
     --from-file="${PROJECT_ROOT}/benchmarks/scratch/metadata.json" \
-    -n llm-serving --dry-run=client -o yaml | kubectl apply --validate=false -f -
+    -n llm-serving --dry-run=client -o yaml | \
+    # --validate=false bypasses client-side OpenAPI schema validation errors where embedded Python/JSON script strings in ConfigMaps are misparsed as Kubernetes resource fields.
+    kubectl apply --validate=false -f -
 
   echo "    Rendering in-cluster benchmark Job manifest..."
   mkdir -p "${GENERATED_DIR}"
@@ -216,6 +222,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
 
   echo "    Applying in-cluster benchmark Job (${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml)..."
   kubectl delete job glm52-incluster-benchmark -n llm-serving --ignore-not-found=true
+  # --validate=false bypasses client-side OpenAPI schema validation errors where embedded Python/JSON script strings in ConfigMaps are misparsed as Kubernetes resource fields.
   kubectl apply --validate=false -f "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
 
   echo "    Waiting for benchmark job pod to schedule and complete execution..."

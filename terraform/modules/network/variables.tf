@@ -6,7 +6,7 @@ variable "ttl_label" { type = string }
 variable "env_label" { type = string }
 variable "vpc_name" {
   type    = string
-  default = "roce-net"
+  default = "glm52-net"
 }
 
 variable "subnet_name" {
@@ -19,10 +19,5 @@ variable "subnet_cidr" {
   default = "10.10.0.0/16"
 }
 
-variable "enable_roce_multinic" {
-  type        = bool
-  default     = false
-  description = "Optional flag to enable secondary Multi-NIC RoCE subnets (MTU 8896) for multi-node distributed training/TP>8"
-}
 
 

@@ -22,7 +22,7 @@ fi
 source "${CONFIG_FILE}"
 
 echo "=============================================================================="
-echo "GLM-5.2 Sovereign Enterprise Inference - Phase 1 & 2: Terraform Deployment"
+echo "GLM-5.2 Sovereign Enterprise Inference - Terraform Deployment"
 echo "=============================================================================="
 echo "Target Project: ${PROJECT_ID}"
 echo "Target Region:  ${REGION} / Zone: ${ZONE}"
@@ -57,7 +57,7 @@ echo "--> 2. Validating Terraform configuration syntax..."
 terraform validate
 
 # 3. Apply Terraform configuration
-echo "--> 3. Applying Terraform configuration (VPC RoCE, GKE Cluster, Hyperdisk, IAM)..."
+echo "--> 3. Applying Terraform configuration (VPC, GKE Cluster, Hyperdisk, IAM)..."
 if [ "${AUTO_APPROVE:-false}" = "true" ] || [ "${AUTO_APPROVE:-false}" = "1" ]; then
   echo "    Applying with -auto-approve..."
   terraform apply -auto-approve
@@ -72,7 +72,7 @@ VPC_NAME=$(terraform output -raw vpc_network_name 2>/dev/null || true)
 TRAJECTORY_BUCKET=$(terraform output -raw trajectory_bucket_name 2>/dev/null || true)
 
 echo "    Cluster Control Plane Endpoint: ${CLUSTER_ENDPOINT}"
-echo "    RoCE VPC Network Name:          ${VPC_NAME}"
+echo "    VPC Network Name:               ${VPC_NAME}"
 echo "    Trajectory Storage Bucket:     ${TRAJECTORY_BUCKET}"
 
 echo "--> 5. Fetching GKE cluster credentials..."

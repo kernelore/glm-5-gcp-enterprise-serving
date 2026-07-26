@@ -32,6 +32,12 @@ scripts/config.env
 *.tmp
 .*.yaml.*
 
+# Benchmark and workbench results
+workbench/
+
+# Agent workspace metadata
+.agents/
+
 # Binary downloads and archives
 kubeconform
 kubeconform-linux-amd64.tar.gz

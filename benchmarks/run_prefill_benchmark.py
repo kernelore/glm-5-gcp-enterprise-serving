@@ -49,6 +49,7 @@ def measure_prefill(
   t_start = time.time()
   t_first = None
   prompt_tokens = 8192
+  has_exact_usage = False
 
   with urllib.request.urlopen(req, timeout=300) as resp:
     for line in resp:
@@ -61,18 +62,31 @@ def measure_prefill(
       try:
         chunk = json.loads(data_str)
         if (
-            "choices" in chunk
-            and chunk["choices"]
-            and chunk["choices"][0].get("text")
-        ):
-          if t_first is None:
-            t_first = time.time()
-        if (
             "usage" in chunk
             and chunk["usage"]
-            and chunk["usage"].get("prompt_tokens")
+            and chunk["usage"].get("prompt_tokens") is not None
         ):
-          prompt_tokens = chunk["usage"]["prompt_tokens"]
+          prompt_tokens = int(chunk["usage"]["prompt_tokens"])
+          has_exact_usage = True
+
+        choices = chunk.get("choices", [])
+        if choices:
+          choice = choices[0]
+          if isinstance(choice, dict):
+            delta = choice.get("delta", {})
+            if not isinstance(delta, dict):
+              delta = {}
+            text_val = choice.get("text")
+            content_val = delta.get("content")
+            reasoning_val = delta.get("reasoning_content")
+            
+            has_content = (
+                (text_val is not None and text_val != "") or 
+                (content_val is not None and content_val != "") or 
+                (reasoning_val is not None and reasoning_val != "")
+            )
+            if has_content and t_first is None:
+              t_first = time.time()
       except Exception:
         pass
 
@@ -82,6 +96,7 @@ def measure_prefill(
 
   result = {
       "prompt_tokens": prompt_tokens,
+      "token_count_source": "usage" if has_exact_usage else "chunk_count_fallback",
       "ttft_sec": ttft,
       "ttft_ms": ttft * 1000.0,
       "prefill_tok_s_system": prefill_tok_s,

@@ -91,19 +91,32 @@ def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperat
                 try:
                     chunk = json.loads(data_part)
                     usage = chunk.get("usage")
-                    if usage and isinstance(usage, dict) and "completion_tokens" in usage:
-                        tokens_received = usage.get("completion_tokens", tokens_received)
+                    if usage and isinstance(usage, dict) and "completion_tokens" in usage and usage["completion_tokens"] is not None:
+                        tokens_received = int(usage["completion_tokens"])
                         has_exact_usage = True
                     
                     choices = chunk.get("choices", [])
                     if choices:
                         choice = choices[0]
                         if isinstance(choice, dict):
-                            now = time.perf_counter()
-                            if t_first_token is None:
-                                t_first_token = now
-                            if not has_exact_usage:
-                                tokens_received += 1
+                            delta = choice.get("delta", {})
+                            if not isinstance(delta, dict):
+                                delta = {}
+                            text_val = choice.get("text")
+                            content_val = delta.get("content")
+                            reasoning_val = delta.get("reasoning_content")
+                            
+                            has_content = (
+                                (text_val is not None and text_val != "") or 
+                                (content_val is not None and content_val != "") or 
+                                (reasoning_val is not None and reasoning_val != "")
+                            )
+                            if has_content:
+                                now = time.perf_counter()
+                                if t_first_token is None:
+                                    t_first_token = now
+                                if not has_exact_usage:
+                                    tokens_received += 1
                 except json.JSONDecodeError:
                     continue
         t_end = time.perf_counter()
@@ -131,6 +144,7 @@ def execute_stream_request(req_id, endpoint, model, prompt, max_tokens, temperat
         "success": success,
         "error": error_msg,
         "tokens": tokens_received,
+        "token_count_source": "usage" if has_exact_usage else "chunk_count_fallback",
         "ttft_ms": ttft * 1000,
         "tpot_ms": tpot * 1000,
         "total_time_s": total_time,
@@ -191,7 +205,7 @@ def main():
                 
                 if elapsed < args.duration and consecutive_errors < 5:
                     req_counter += 1
-                    prompt = SOAK_PROMPTS[req_counter % len(SOAK_PROMPTS)]
+                    prompt = f"{SOAK_PROMPTS[req_counter % len(SOAK_PROMPTS)]}\n\n[Benchmark Req-{req_counter}-{time.time_ns()}]"
                     active_futures.add(executor.submit(execute_stream_request, req_counter, args.endpoint, args.model, prompt, args.max_tokens, args.temperature, args.api_key))
 
 
@@ -227,10 +241,19 @@ def main():
     tpot_mean = round(statistics.mean(tpot_vals), 2) if tpot_vals else 0.0
     throughput_tps = round(cluster_throughput, 2)
 
+    sources_used = sorted(list(set(r.get("token_count_source", "unknown") for r in successful_results)))
+    if len(sources_used) == 1:
+        agg_source = sources_used[0]
+    elif len(sources_used) > 1:
+        agg_source = "mixed: " + ", ".join(sources_used)
+    else:
+        agg_source = "none"
+
     summary = {
         "successful_requests": completed_requests,
         "total_requests": len(results),
         "total_completed": completed_requests,
+        "token_count_source": agg_source,
         "ttft_mean_ms": ttft_mean,
         "tpot_mean_ms": tpot_mean,
         "throughput_tokens_sec": throughput_tps,
@@ -239,7 +262,8 @@ def main():
             "total_duration_seconds": round(total_soak_time, 3),
             "total_requests_completed": completed_requests,
             "total_requests_failed": failed_requests,
-            "success_rate_percent": round(100.0 * completed_requests / max(1, len(results)), 3)
+            "success_rate_percent": round(100.0 * completed_requests / max(1, len(results)), 3),
+            "token_count_source": agg_source,
         },
         "metrics": {}
     }

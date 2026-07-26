@@ -13,7 +13,7 @@ project_id       = "YOUR_PROJECT_ID"
 
 # GCP Region and Zone for Sovereign Deployment (Hamina, Finland recommended)
 region           = "europe-north1"
-zone             = "europe-north1-b" # Required zone for NVIDIA B200 and RoCE network profile
+zone             = "europe-north1-b" # Required zone for NVIDIA B200
 
 # GKE Cluster and GPU Node Pool Configuration
 cluster_name            = "glm-enterprise-fi"

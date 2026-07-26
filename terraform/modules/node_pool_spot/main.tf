@@ -64,17 +64,5 @@ resource "google_container_node_pool" "blackwell_spot_pool" {
       mode = "GKE_METADATA"
     }
 
-    # ==========================================================================
-    # OPTIONAL: 8x Secondary Titanium RoCE Network Interfaces (Multi-NIC)
-    # ==========================================================================
-    # Uncomment if enable_roce_multinic is true and secondary subnets are created:
-    #
-    # dynamic "additional_node_network_configs" {
-    #   for_each = var.enable_roce_multinic ? range(8) : []
-    #   content {
-    #     network    = "${var.vpc_name}-roce-net-${additional_node_network_configs.value}"
-    #     subnetwork = "${var.subnet_name}-roce-sub-${additional_node_network_configs.value}"
-    #   }
-    # }
   }
 }
