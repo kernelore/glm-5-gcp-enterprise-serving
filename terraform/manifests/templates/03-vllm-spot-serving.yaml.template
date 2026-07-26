@@ -116,7 +116,7 @@ spec:
           mountPropagation: HostToContainer
       containers:
       - name: vllm-engine
-        image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.25.1
+        image: ${SERVING_IMAGE}
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c"]
         args:

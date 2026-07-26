@@ -265,15 +265,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
     bumped_content = real_content.replace("VLLM_IMAGE_TAG=\"v0.25.1\"", "VLLM_IMAGE_TAG=\"v0.26.0\"").replace("SGLANG_IMAGE_TAG=\"v0.5.12-cu130\"", "SGLANG_IMAGE_TAG=\"v0.5.16-cu130\"")
     tmp_script.write_text(bumped_content, encoding="utf-8")
     
-    orig_parse = generate_comparison.parse_engine_pins
-    generate_comparison.parse_engine_pins = lambda path=str(tmp_script): orig_parse(path)
-    
     root = Path("benchmarks/results")
     vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
     sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
     
     try:
-        validate_provenance(vllm_data, sglang_data)
+        validate_provenance(vllm_data, sglang_data, deploy_script_path=str(tmp_script))
         print("ERROR: validate_provenance() failed to catch bumped engine pins against baseline JSONs!", file=sys.stderr)
         sys.exit(1)
     except ValueError as e:
@@ -287,7 +284,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     deleted_content = "\n".join(l for l in real_content.splitlines() if "VLLM_IMAGE_TAG" not in l)
     tmp_script.write_text(deleted_content, encoding="utf-8")
     try:
-        orig_parse(str(tmp_script))
+        parse_engine_pins(str(tmp_script))
         print("ERROR: parse_engine_pins() failed to raise when VLLM_IMAGE_TAG was deleted!", file=sys.stderr)
         sys.exit(1)
     except ValueError as e:
@@ -298,6 +295,72 @@ with tempfile.TemporaryDirectory() as tmpdir:
 '
 echo "    [OK] Check 12 passed: Engine version coupling and fail-closed parsing verified against synthetic deploy scripts."
 
+echo "--> Check 13: Verifying rendered manifest tags against deploy script pins..."
+python3 -c '
+import sys, tempfile, shutil, os
+from pathlib import Path
+sys.path.insert(0, "benchmarks")
+from generate_comparison import validate_rendered_manifests
+
+# Case 1: Honest case passes on committed script
+try:
+    validate_rendered_manifests("scripts/03_deploy_workloads.sh")
+    print("    [OK] Case 1 (Honest Script) passed: validate_rendered_manifests() verified rendered tags match pins.")
+except Exception as e:
+    print(f"ERROR: validate_rendered_manifests() failed on honest script: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Setup synthetic copy in temp dir
+with tempfile.TemporaryDirectory() as tmpdir:
+    repo_dir = Path(tmpdir) / "test_repo"
+    scripts_dir = repo_dir / "scripts"
+    os.makedirs(scripts_dir, exist_ok=True)
+    real_content = Path("scripts/03_deploy_workloads.sh").read_text(encoding="utf-8")
+    tmp_script = scripts_dir / "03_deploy_workloads.sh"
+
+    # Case 2: Synthetic injection of IMAGE_TAG="v9.9.9" in vLLM branch while VLLM_IMAGE_TAG stays at v0.25.1 -> must fail
+    injected_content = real_content.replace("IMAGE_TAG=\"${VLLM_IMAGE_TAG}\"", "IMAGE_TAG=\"v9.9.9\"")
+    if injected_content == real_content:
+        print("ERROR: Failed to inject v9.9.9 into temporary script!", file=sys.stderr)
+        sys.exit(1)
+    tmp_script.write_text(injected_content, encoding="utf-8")
+    tmp_script.chmod(0o755)
+    
+    try:
+        validate_rendered_manifests(str(tmp_script))
+        print("ERROR: validate_rendered_manifests() failed to catch injected IMAGE_TAG=\"v9.9.9\"!", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        msg = str(e)
+        if "PROVENANCE GATE FAILURE" not in msg or "9.9.9" not in msg or "0.25.1" not in msg:
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE naming both 9.9.9 and 0.25.1, got: {msg}", file=sys.stderr)
+            sys.exit(1)
+        print(f"    [OK] Case 2 (Injected Tag) passed: Caught expected mismatch naming both versions: {msg}")
+
+    # Case 3: Fail closed when rendered manifest has no image line at all
+    templates_dir = repo_dir / "terraform" / "manifests" / "templates"
+    os.makedirs(templates_dir, exist_ok=True)
+    for tf in Path("terraform/manifests/templates").glob("*.template"):
+        if "vllm-spot-serving" in tf.name:
+            txt = tf.read_text(encoding="utf-8")
+            txt_no_img = "\n".join(l for l in txt.splitlines() if "image:" not in l)
+            (templates_dir / tf.name).write_text(txt_no_img, encoding="utf-8")
+        else:
+            shutil.copy(tf, templates_dir / tf.name)
+    
+    tmp_script.write_text(real_content, encoding="utf-8")
+    try:
+        validate_rendered_manifests(str(tmp_script))
+        print("ERROR: validate_rendered_manifests() failed to catch missing image line in rendered manifest!", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        if "PROVENANCE GATE FAILURE" not in str(e) or "No serving image line found" not in str(e):
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE for missing image line, got: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"    [OK] Case 3 (Missing Image Line) passed: Caught expected fail-closed error: {e}")
+'
+echo "    [OK] Check 13 passed: Rendered manifest tag verification and fail-closed absence checks verified."
+
 echo "=============================================================================="
-echo "=== ALL 12 REMEDIATION CHECKS PASSED ==="
+echo "=== ALL 13 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="

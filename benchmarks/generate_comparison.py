@@ -11,6 +11,10 @@ Strict constraint: Does NOT create any new .md files (no ENGINE_COMPARISON.md).
 """
 
 import sys
+import os
+import tempfile
+import shutil
+import subprocess
 import json
 import re
 from datetime import datetime
@@ -79,6 +83,63 @@ def parse_engine_pins(deploy_script_path: str = "scripts/03_deploy_workloads.sh"
             raise ValueError(f"PROVENANCE GATE FAILURE: Normalized {var_name} is empty for {eng} in {deploy_script_path}")
     return pins
 
+def validate_rendered_manifests(deploy_script_path: str = "scripts/03_deploy_workloads.sh"):
+    """
+    Renders manifests for both vllm and sglang and asserts that the image tag present in
+    the rendered serving manifest matches parse_engine_pins()[engine]. Fails closed.
+    """
+    pins = parse_engine_pins(deploy_script_path)
+    script_path = Path(deploy_script_path).resolve()
+    repo_root = Path(__file__).resolve().parent.parent
+    candidate_root = script_path.parent.parent
+    
+    templates_src = candidate_root / "terraform" / "manifests" / "templates" if (candidate_root / "terraform" / "manifests" / "templates").exists() else repo_root / "terraform" / "manifests" / "templates"
+    cfg_src = candidate_root / "scripts" / "config.env" if (candidate_root / "scripts" / "config.env").exists() else (candidate_root / "scripts" / "config.env.example" if (candidate_root / "scripts" / "config.env.example").exists() else (repo_root / "scripts" / "config.env" if (repo_root / "scripts" / "config.env").exists() else repo_root / "scripts" / "config.env.example"))
+
+    for eng in ["vllm", "sglang"]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = os.environ.copy()
+            env["INFERENCE_ENGINE"] = eng
+            env["PROJECT_ID"] = env.get("PROJECT_ID", "ci-test")
+            env["REGION"] = env.get("REGION", "europe-north1")
+            env["ZONE"] = env.get("ZONE", "europe-north1-b")
+            env["CLUSTER_NAME"] = env.get("CLUSTER_NAME", "glm-enterprise-fi")
+            
+            os.makedirs(Path(tmpdir) / "scripts", exist_ok=True)
+            os.makedirs(Path(tmpdir) / "terraform" / "manifests", exist_ok=True)
+            templates_link = Path(tmpdir) / "terraform" / "manifests" / "templates"
+            if not templates_link.exists():
+                os.symlink(templates_src, templates_link)
+            os.makedirs(Path(tmpdir) / "terraform" / "manifests" / "generated", exist_ok=True)
+            os.symlink(cfg_src, Path(tmpdir) / "scripts" / "config.env")
+            exec_script = Path(tmpdir) / "scripts" / "03_deploy_workloads.sh"
+            shutil.copy(script_path, exec_script)
+            exec_script.chmod(0o755)
+            cmd_path = str(exec_script)
+            gen_dir = Path(tmpdir) / "terraform" / "manifests" / "generated"
+
+            res = subprocess.run([cmd_path, "--render-only"], env=env, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise ValueError(f"PROVENANCE GATE FAILURE: Failed to render manifests for {eng} using {deploy_script_path}: {res.stderr or res.stdout}")
+            
+            manifest_name = f"03-{eng}-spot-serving.yaml"
+            manifest_file = gen_dir / manifest_name
+            if not manifest_file.exists():
+                raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} missing after --render-only for {eng}")
+            
+            content = manifest_file.read_text(encoding="utf-8")
+            image_lines = [m for m in re.findall(r'^\s*image:\s*([^\s#]+)', content, re.MULTILINE) if "blackwell" in m]
+            if not image_lines:
+                raise ValueError(f"PROVENANCE GATE FAILURE: No serving image line found in rendered manifest {manifest_name}")
+            
+            for img in image_lines:
+                if ":" not in img:
+                    raise ValueError(f"PROVENANCE GATE FAILURE: Rendered image URI '{img}' missing tag in {manifest_name}")
+                tag = img.split(":")[-1]
+                norm_tag = normalize_version(tag)
+                if norm_tag != pins[eng]:
+                    raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} image tag '{norm_tag}' (from '{tag}') does not match deploy pin '{pins[eng]}'")
+
 def get_suite_timestamps(data: dict) -> tuple:
     for key in ["benchmark_config", "soak_config", "sweep_config", "prefill_config", "metadata"]:
         cfg = data.get(key)
@@ -107,13 +168,14 @@ def get_suite_duration(suite_name: str, data: dict) -> float:
             dur = data["ttft_ms"] / 1000.0
     return dur
 
-def validate_provenance(vllm: dict, sglang: dict):
+def validate_provenance(vllm: dict, sglang: dict, deploy_script_path: str = "scripts/03_deploy_workloads.sh"):
     """
     Validates engine identity, container image, engine version against deploy script pins,
     timestamp formatting, and interval non-overlap against explicit suite boundaries.
     Enforces non-overlap of suite intervals without constraining execution order.
     """
-    pins = parse_engine_pins()
+    pins = parse_engine_pins(deploy_script_path)
+    validate_rendered_manifests(deploy_script_path)
     suites = ["standard", "massive", "soak", "saturation", "prefill"]
     for s in suites:
         v_meta = get_metadata(vllm[s])
