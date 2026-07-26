@@ -30,8 +30,8 @@ jobs:
             echo "ERROR: Found potential exposed API keys!"
             FAIL=1
           fi
-          # Check for local home paths, keeping /usr/local/google/home/ and /home/<user>/ but filtering /home/(kubernetes|runner)/ (and telemetry_sanitizer covered by unit test)
-          if git grep -nE '/usr/local/google/home/|/home/[a-z]' -- ':(exclude)benchmarks/telemetry_sanitizer.py' \
+          # Check for local home directories (keeping usr-local-google-home and home-user paths but filtering kubernetes/runner hostPaths and telemetry_sanitizer covered by unit test)
+          if git grep -nE '/usr/local/google/home/[a-zA-Z0-9_-]|/home/[a-zA-Z0-9_-]' -- ':(exclude)benchmarks/telemetry_sanitizer.py' \
              | grep -vE '/home/(kubernetes|runner)/'; then
             echo "ERROR: Found local filesystem home paths in repository!"
             FAIL=1
