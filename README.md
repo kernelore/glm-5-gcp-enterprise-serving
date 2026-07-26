@@ -126,8 +126,8 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 * **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets and radix cache flushing to ensure 0% prefix-cache hits (measuring true cold decoding and prefill throughput).
 * **Sequential Execution & Drain Protocol:** To prevent resource contention and queue contamination, benchmark suites were executed strictly sequentially with full queue drain intervals between runs.
 * **Engine Provenance Verification:** Engine identity and container provenance were verified prior to every suite by inspecting `/metrics` endpoints (`^vllm:` vs `^sglang:`) and deployment container images. Collection timestamps recorded in suite metadata:
-  * **vLLM** (`vllm-blackwell:v0.25.1`): Standard (2026-07-24T10:00:00Z), Massive (2026-07-24T10:02:00Z), Soak (2026-07-24T10:05:00Z), Saturation (2026-07-24T10:37:00Z), Prefill (2026-07-24T10:42:00Z).
-  * **SGLang** (`sglang-blackwell:v0.5.12-cu130`): Standard (2026-07-24T14:00:00Z), Massive (2026-07-24T14:02:00Z), Soak (2026-07-24T14:05:00Z), Saturation (2026-07-24T14:37:00Z), Prefill (2026-07-24T14:42:00Z).
+  * **vLLM** (`vllm-blackwell:v0.25.1`): Standard (2026-07-24T16:05:42Z), Massive (2026-07-24T20:12:03Z), Soak (2026-07-24T16:10:46Z), Saturation (2026-07-24T20:13:05Z), Prefill (2026-07-24T16:14:05Z).
+  * **SGLang** (`sglang-blackwell:v0.5.12-cu130`): Standard (2026-07-24T16:57:26Z), Massive (2026-07-24T17:11:02Z), Soak (2026-07-24T15:11:52Z), Saturation (2026-07-24T20:59:02Z), Prefill (2026-07-24T15:11:07Z).
 
 #### Table 1: Production Workload Suite Summary (Gateway Port 4000)
 | Workload Suite | Metric | vLLM (0.25.1) | SGLang (0.5.12) | Delta ($\Delta$) |

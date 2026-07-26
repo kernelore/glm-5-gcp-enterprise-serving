@@ -293,6 +293,12 @@ def main():
     except Exception:
         summary["metadata"] = {}
 
+    try:
+        from telemetry_sanitizer import sanitize_telemetry
+    except ImportError:
+        from benchmarks.telemetry_sanitizer import sanitize_telemetry
+    summary = sanitize_telemetry(summary, args.output)
+
     with open(args.output, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"Massive benchmark report saved to {args.output}")

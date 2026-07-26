@@ -11,15 +11,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Scan for Leaked Credentials and Paths
+        run: |
+          echo "Scanning git-tracked files for sensitive credentials and local home paths..."
+          FAIL=0
+          # Check for real-looking LiteLLM / OpenAI keys (excluding the documented -change-me placeholder and this CI workflow file)
+          if git grep -nE 'sk-[a-zA-Z0-9-]{16,}' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*' | grep -v 'sk-glm52-master-secret-key-change-me'; then
+            echo "ERROR: Found potential exposed API keys!"
+            FAIL=1
+          fi
+          # Check for local home paths (/usr/local/google/home/ or /home/<user>/)
+          if git grep -nE '/usr/local/google/home/|/home/[a-z]' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*'; then
+            echo "ERROR: Found local filesystem home paths in repository!"
+            FAIL=1
+          fi
+          # Check for specific project IDs (e.g., boring-352808)
+          if git grep -nE 'boring-352808' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*'; then
+            echo "ERROR: Found hardcoded GCP project ID 'boring-352808'!"
+            FAIL=1
+          fi
+          if [ "${FAIL}" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Secret scan passed cleanly."
+
   terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
@@ -34,7 +65,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Dependencies
         run: |
@@ -54,10 +85,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
@@ -72,7 +103,7 @@ jobs:
         engine: [vllm, sglang]
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Kubeconform
         run: |
@@ -90,24 +121,29 @@ jobs:
           ./scripts/03_deploy_workloads.sh --render-only
 
       - name: Validate Rendered YAML
-        run: kubeconform -strict -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' -ignore-missing-schemas terraform/manifests/generated/*.yaml
+        run: kubeconform -strict -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml
 
   reproducibility:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
       - name: Check Benchmark Reproducibility
         run: |
           if [ ! -d "benchmarks/results" ] || [ -z "$(ls -A benchmarks/results 2>/dev/null)" ]; then
-            echo "Notice: benchmarks/results/ absent or empty. Skipping CI reproducibility check."
+            if grep -q "ENGINE_COMPARISON_START" README.md; then
+              echo "ERROR: README.md publishes comparison tables, but benchmarks/results/ is absent or empty. Cannot reproduce tables without raw data."
+              exit 1
+            else
+              echo "Notice: benchmarks/results/ absent or empty and no comparison table published in README.md. Skipping."
+            fi
           else
             echo "--> benchmarks/results/ present. Running reproducibility check..."
             python3 benchmarks/generate_comparison.py

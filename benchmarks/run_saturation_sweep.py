@@ -263,8 +263,14 @@ def main():
     meta = json.loads(args.metadata) if isinstance(args.metadata, str) else args.metadata
   except Exception:
     meta = {}
+  try:
+    from telemetry_sanitizer import sanitize_telemetry
+  except ImportError:
+    from benchmarks.telemetry_sanitizer import sanitize_telemetry
+  out_payload = sanitize_telemetry({"metadata": meta, "sweep_results": sweep_results}, args.output)
+
   with open(args.output, "w") as f:
-    json.dump({"metadata": meta, "sweep_results": sweep_results}, f, indent=2)
+    json.dump(out_payload, f, indent=2)
   print(f"\nSaved full saturation sweep results to {args.output}")
 
 

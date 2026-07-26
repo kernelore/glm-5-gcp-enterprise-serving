@@ -120,6 +120,12 @@ def measure_prefill(
   except Exception:
     meta = {}
   result["metadata"] = meta
+  try:
+    from telemetry_sanitizer import sanitize_telemetry
+  except ImportError:
+    from benchmarks.telemetry_sanitizer import sanitize_telemetry
+  result = sanitize_telemetry(result, output)
+
   with open(output, "w") as f:
     json.dump(result, f, indent=2)
   return result
