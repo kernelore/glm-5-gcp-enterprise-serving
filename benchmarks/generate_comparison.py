@@ -52,6 +52,33 @@ def normalize_version(ver: str) -> str:
         ver = ver[:-6]
     return ver
 
+def parse_engine_pins(deploy_script_path: str = "scripts/03_deploy_workloads.sh") -> dict:
+    """
+    Parses VLLM_IMAGE_TAG and SGLANG_IMAGE_TAG from the deploy script and normalizes them.
+    Fails closed: raises ValueError if either pin is absent, unparseable, empty, 'latest',
+    or matches more than once with conflicting values.
+    """
+    path = Path(deploy_script_path)
+    if not path.exists():
+        raise ValueError(f"PROVENANCE GATE FAILURE: Deploy script missing at {deploy_script_path}")
+    content = path.read_text(encoding="utf-8")
+    
+    pins = {}
+    for eng, var_name in [("vllm", "VLLM_IMAGE_TAG"), ("sglang", "SGLANG_IMAGE_TAG")]:
+        matches = re.findall(rf'^\s*(?:export\s+)?{var_name}\s*=\s*(["\']?)([^"\'\s#]+)\1', content, re.MULTILINE)
+        if not matches:
+            raise ValueError(f"PROVENANCE GATE FAILURE: Missing or unparseable {var_name} pin for {eng} in {deploy_script_path}")
+        values = set(m[1] for m in matches)
+        if len(values) > 1:
+            raise ValueError(f"PROVENANCE GATE FAILURE: Conflicting {var_name} pins for {eng} in {deploy_script_path}: {values}")
+        val = values.pop().strip()
+        if not val or val == "latest":
+            raise ValueError(f"PROVENANCE GATE FAILURE: Invalid {var_name} value '{val}' for {eng} in {deploy_script_path}")
+        pins[eng] = normalize_version(val)
+        if not pins[eng]:
+            raise ValueError(f"PROVENANCE GATE FAILURE: Normalized {var_name} is empty for {eng} in {deploy_script_path}")
+    return pins
+
 def get_suite_timestamps(data: dict) -> tuple:
     for key in ["benchmark_config", "soak_config", "sweep_config", "prefill_config", "metadata"]:
         cfg = data.get(key)
@@ -82,10 +109,11 @@ def get_suite_duration(suite_name: str, data: dict) -> float:
 
 def validate_provenance(vllm: dict, sglang: dict):
     """
-    Validates engine identity, container image, engine version, timestamp formatting,
-    and interval non-overlap against explicit suite_start_ts / suite_end_ts boundaries.
+    Validates engine identity, container image, engine version against deploy script pins,
+    timestamp formatting, and interval non-overlap against explicit suite boundaries.
     Enforces non-overlap of suite intervals without constraining execution order.
     """
+    pins = parse_engine_pins()
     suites = ["standard", "massive", "soak", "saturation", "prefill"]
     for s in suites:
         v_meta = get_metadata(vllm[s])
@@ -102,12 +130,12 @@ def validate_provenance(vllm: dict, sglang: dict):
             raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json has mismatched metadata (engine='{g_eng}', image='{g_img}')")
 
         v_ver_norm = normalize_version(v_meta.get("engine_version", ""))
-        if v_ver_norm != "0.25.1":
-            raise ValueError(f"PROVENANCE GATE FAILURE: results/vllm/{s}_results.json engine_version '{v_meta.get('engine_version')}' does not match expected '0.25.1'")
+        if v_ver_norm != pins["vllm"]:
+            raise ValueError(f"PROVENANCE GATE FAILURE: results/vllm/{s}_results.json engine_version '{v_meta.get('engine_version')}' does not match the deployed pin '{pins['vllm']}' from scripts/03_deploy_workloads.sh")
 
         g_ver_norm = normalize_version(g_meta.get("engine_version", ""))
-        if g_ver_norm != "0.5.12":
-            raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json engine_version '{g_meta.get('engine_version')}' does not match expected '0.5.12'")
+        if g_ver_norm != pins["sglang"]:
+            raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json engine_version '{g_meta.get('engine_version')}' does not match the deployed pin '{pins['sglang']}' from scripts/03_deploy_workloads.sh")
 
     for eng_name, eng_data in [("vllm", vllm), ("sglang", sglang)]:
         intervals = []

@@ -57,12 +57,12 @@ if ! grep -q "cm-sd-adapter-v" "${DEPLOY_SCRIPT}"; then
   echo "ERROR: Check 3 failed: custom-metrics-stackdriver-adapter is not pinned to a specific release tag!" >&2
   exit 1
 fi
-if ! grep -q "v0.25.1" "${DEPLOY_SCRIPT}"; then
-  echo "ERROR: Check 3 failed: vLLM engine is not pinned to v0.25.1 in ${DEPLOY_SCRIPT}!" >&2
+if ! grep -E -q '^\s*(export\s+)?VLLM_IMAGE_TAG="(v[0-9]+\.[0-9]+\.[0-9]+.*)"' "${DEPLOY_SCRIPT}"; then
+  echo "ERROR: Check 3 failed: VLLM_IMAGE_TAG is not pinned to an explicit semver release tag in ${DEPLOY_SCRIPT}!" >&2
   exit 1
 fi
-if ! grep -q "v0.5.12-cu130" "${DEPLOY_SCRIPT}"; then
-  echo "ERROR: Check 3 failed: SGLang engine is not pinned to v0.5.12-cu130 in ${DEPLOY_SCRIPT}!" >&2
+if ! grep -E -q '^\s*(export\s+)?SGLANG_IMAGE_TAG="(v[0-9]+\.[0-9]+\.[0-9]+.*)"' "${DEPLOY_SCRIPT}"; then
+  echo "ERROR: Check 3 failed: SGLANG_IMAGE_TAG is not pinned to an explicit semver release tag in ${DEPLOY_SCRIPT}!" >&2
   exit 1
 fi
 echo "    [OK] Check 3 passed: Adapter manifest and engine versions are properly pinned."
@@ -241,6 +241,63 @@ except ValueError as e:
 '
 echo "    [OK] Check 11 passed: Interval gate correctly tolerates execution order while enforcing non-overlap."
 
+echo "--> Check 12: Verifying engine pin parsing and coupling against deploy script..."
+python3 -c '
+import sys, tempfile, shutil
+from pathlib import Path
+sys.path.insert(0, "benchmarks")
+import generate_comparison
+from generate_comparison import parse_engine_pins, validate_provenance, load_json
+
+# Case 1: Prove normalisation of the -cu130 suffix and exact pin parsing on real committed script
+pins = parse_engine_pins("scripts/03_deploy_workloads.sh")
+if pins != {"vllm": "0.25.1", "sglang": "0.5.12"}:
+    print(f"ERROR: Expected pins {{\"vllm\": \"0.25.1\", \"sglang\": \"0.5.12\"}} on real script, got {pins}", file=sys.stderr)
+    sys.exit(1)
+print(f"    [OK] Case 1 (Real Script) passed: parse_engine_pins() returned {pins}, proving suffix normalization.")
+
+# Setup synthetic copy in temp dir
+with tempfile.TemporaryDirectory() as tmpdir:
+    real_content = Path("scripts/03_deploy_workloads.sh").read_text(encoding="utf-8")
+    tmp_script = Path(tmpdir) / "03_deploy_workloads.sh"
+
+    # Case 2: Pins bumped to v0.26.0 / v0.5.16-cu130 against committed result files -> gate must fail naming both versions
+    bumped_content = real_content.replace("VLLM_IMAGE_TAG=\"v0.25.1\"", "VLLM_IMAGE_TAG=\"v0.26.0\"").replace("SGLANG_IMAGE_TAG=\"v0.5.12-cu130\"", "SGLANG_IMAGE_TAG=\"v0.5.16-cu130\"")
+    tmp_script.write_text(bumped_content, encoding="utf-8")
+    
+    orig_parse = generate_comparison.parse_engine_pins
+    generate_comparison.parse_engine_pins = lambda path=str(tmp_script): orig_parse(path)
+    
+    root = Path("benchmarks/results")
+    vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+    sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+    
+    try:
+        validate_provenance(vllm_data, sglang_data)
+        print("ERROR: validate_provenance() failed to catch bumped engine pins against baseline JSONs!", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        msg = str(e)
+        if "PROVENANCE GATE FAILURE" not in msg or "0.26.0" not in msg or "0.25.1" not in msg:
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE naming both 0.26.0 and 0.25.1, got: {msg}", file=sys.stderr)
+            sys.exit(1)
+        print(f"    [OK] Case 2 (Bumped Pins) passed: Caught expected mismatch naming both versions: {msg}")
+
+    # Case 3: VLLM_IMAGE_TAG line deleted entirely -> parse_engine_pins() must raise, not return a default
+    deleted_content = "\n".join(l for l in real_content.splitlines() if "VLLM_IMAGE_TAG" not in l)
+    tmp_script.write_text(deleted_content, encoding="utf-8")
+    try:
+        orig_parse(str(tmp_script))
+        print("ERROR: parse_engine_pins() failed to raise when VLLM_IMAGE_TAG was deleted!", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        if "PROVENANCE GATE FAILURE" not in str(e):
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE when pin deleted, got: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"    [OK] Case 3 (Deleted Pin) passed: parse_engine_pins() raised fail-closed error: {e}")
+'
+echo "    [OK] Check 12 passed: Engine version coupling and fail-closed parsing verified against synthetic deploy scripts."
+
 echo "=============================================================================="
-echo "=== ALL 11 REMEDIATION CHECKS PASSED ==="
+echo "=== ALL 12 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="
