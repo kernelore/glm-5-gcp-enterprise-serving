@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Scan for Leaked Credentials and Paths
+        env:
+          FORBIDDEN_PROJECT_ID: ${{ vars.FORBIDDEN_PROJECT_ID }}
+        run: bash tests/check_secret_scan.sh
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init & Validate
+        run: |
+          terraform fmt -check -recursive
+          cd terraform && terraform init -backend=false && terraform validate
+
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          wget -q https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Run ShellCheck
+        run: shellcheck scripts/*.sh tests/*.sh
+
+      - name: Run Remediation Test Suite
+        run: ./tests/adv_test_serving_remediation.sh
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Run Dependency Floor Gate
+        run: python3 tests/check_dependency_floors.py
+
+      - name: Python Compile Check
+        run: python3 -m py_compile scripts/*.py benchmarks/*.py tests/*.py
+
+      - name: Run Python Unit Tests
+        run: python3 -m unittest discover -s tests -p "test_*.py"
+
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        engine: [vllm, sglang]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Install Kubeconform
+        run: |
+          wget -q https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Render Workload Manifests
+        env:
+          INFERENCE_ENGINE: ${{ matrix.engine }}
+        run: |
+          cp scripts/config.env.example scripts/config.env
+          sed -i 's/export PROJECT_ID="YOUR_PROJECT_ID"/export PROJECT_ID="ci-test"/' scripts/config.env
+          sed -i "s/export INFERENCE_ENGINE=\".*\"/export INFERENCE_ENGINE=\"${INFERENCE_ENGINE}\"/" scripts/config.env || echo "export INFERENCE_ENGINE=\"${INFERENCE_ENGINE}\"" >> scripts/config.env
+          ./scripts/03_deploy_workloads.sh --render-only
+
+      - name: Validate Rendered YAML
+        run: kubeconform -strict -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml
+
+  reproducibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Check Benchmark Reproducibility
+        run: |
+          if [ ! -d "benchmarks/results" ] || [ -z "$(ls -A benchmarks/results 2>/dev/null)" ]; then
+            if grep -q "ENGINE_COMPARISON_START" README.md; then
+              echo "ERROR: README.md publishes comparison tables, but benchmarks/results/ is absent or empty. Cannot reproduce tables without raw data."
+              exit 1
+            else
+              echo "Notice: benchmarks/results/ absent or empty and no comparison table published in README.md. Skipping."
+            fi
+          else
+            echo "--> benchmarks/results/ present. Running reproducibility check..."
+            python3 benchmarks/generate_comparison.py
+            git diff --exit-code README.md
+          fi
