@@ -139,6 +139,10 @@ except ValueError as e:
 '
 echo "    [OK] Check 6 passed: Provenance Gate successfully rejected adversarial version and timestamp inputs."
 
+echo "--> Check 7: Verifying unit test suite for telemetry sanitizer..."
+python3 -m unittest discover -s tests -p "test_*.py" >/dev/null
+echo "    [OK] Check 7 passed: Telemetry sanitizer unit tests passed cleanly."
+
 echo "=============================================================================="
-echo "SUCCESS: All 6 automated remediation checks passed cleanly!"
+echo "SUCCESS: All 7 automated remediation checks passed cleanly!"
 echo "=============================================================================="

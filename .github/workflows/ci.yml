@@ -22,19 +22,19 @@ jobs:
         run: |
           echo "Scanning git-tracked files for sensitive credentials and local home paths..."
           FAIL=0
-          # Check for real-looking LiteLLM / OpenAI keys (excluding the documented -change-me placeholder, dummy test aliases, and this CI workflow file)
-          if git grep -nE 'sk-[a-zA-Z0-9-]{16,}' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*' | grep -vE 'sk-glm52-master-secret-key-change-me|sk-glm52-quota-test-'; then
+          # Check for real-looking LiteLLM / OpenAI keys (excluding documented placeholder, test aliases, and sanitizer regex)
+          if git grep -nE 'sk-[a-zA-Z0-9-]{16,}' | grep -vE 'sk-glm52-master-secret-key-change-me|sk-glm52-quota-test-|sk-\['; then
             echo "ERROR: Found potential exposed API keys!"
             FAIL=1
           fi
-          # Check for local home paths (/usr/local/google/home/ or /home/<user>/)
-          if git grep -nE '/usr/local/google/home/|/home/[a-z]' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*'; then
+          # Check for local home paths, keeping /usr/local/google/home/ and /home/<user>/ but filtering /home/(kubernetes|runner)/ and regex literals
+          if git grep -nE '/usr/local/google/home/|/home/[a-z]' | grep -vE '/home/(kubernetes|runner)/|/home/\[|/home/<user>/|/usr/local/google/home/\['; then
             echo "ERROR: Found local filesystem home paths in repository!"
             FAIL=1
           fi
-          # Check for specific project IDs (e.g., boring-352808)
-          if git grep -nE 'boring-352808' -- ':(exclude).github/workflows/ci.yml' ':(exclude)tests/*'; then
-            echo "ERROR: Found hardcoded GCP project ID 'boring-352808'!"
+          # Check for forbidden project ID using repository variable so literal never lands in tracked files
+          if [ -n "${{ vars.FORBIDDEN_PROJECT_ID }}" ] && git grep -nE "${{ vars.FORBIDDEN_PROJECT_ID }}"; then
+            echo "ERROR: Found hardcoded GCP project ID!"
             FAIL=1
           fi
           if [ "${FAIL}" -ne 0 ]; then
@@ -93,7 +93,10 @@ jobs:
           python-version: '3.10'
 
       - name: Python Compile Check
-        run: python3 -m py_compile scripts/*.py benchmarks/*.py
+        run: python3 -m py_compile scripts/*.py benchmarks/*.py tests/*.py
+
+      - name: Run Python Unit Tests
+        run: python3 -m unittest discover -s tests -p "test_*.py"
 
   manifests:
     runs-on: ubuntu-latest
