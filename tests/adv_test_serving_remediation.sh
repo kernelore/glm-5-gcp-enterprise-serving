@@ -143,6 +143,10 @@ echo "--> Check 7: Verifying unit test suite for telemetry sanitizer..."
 python3 -m unittest discover -s tests -p "test_*.py" >/dev/null
 echo "    [OK] Check 7 passed: Telemetry sanitizer unit tests passed cleanly."
 
+echo "--> Check 8: Verifying dependency floor constraints..."
+python3 tests/check_dependency_floors.py >/dev/null
+echo "    [OK] Check 8 passed: All dependencies satisfy or exceed floor constraints."
+
 echo "=============================================================================="
-echo "SUCCESS: All 7 automated remediation checks passed cleanly!"
+echo "SUCCESS: All 8 automated remediation checks passed cleanly!"
 echo "=============================================================================="
