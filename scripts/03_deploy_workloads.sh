@@ -118,13 +118,13 @@ if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
   export HPA_QUEUE_METRIC="sglang_num_queue_reqs|unknown"
   export HPA_RUNNING_METRIC="sglang_num_running_reqs|unknown"
   IMAGE_NAME="sglang-blackwell"
-  IMAGE_TAG="v0.5.12-cu130"
+  IMAGE_TAG="v0.5.16-cu130"
   DOCKERFILE="Dockerfile.sglang"
 else
   export HPA_QUEUE_METRIC="vllm:num_requests_waiting|gauge"
   export HPA_RUNNING_METRIC="vllm:num_requests_running|gauge"
   IMAGE_NAME="vllm-blackwell"
-  IMAGE_TAG="v0.25.1"
+  IMAGE_TAG="v0.26.0"
   DOCKERFILE="Dockerfile.vllm"
 fi
 export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/${IMAGE_NAME}:${IMAGE_TAG}"

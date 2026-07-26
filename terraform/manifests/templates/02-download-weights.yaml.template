@@ -26,7 +26,7 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: downloader-and-converter
-        image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.25.1
+        image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.26.0
         resources:
           requests:
             memory: "16Gi"

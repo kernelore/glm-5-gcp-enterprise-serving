@@ -169,9 +169,9 @@ IMAGE=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{
 FLAGS=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null || echo "[]")
 RUN_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 if [ "${ENGINE}" = "sglang" ]; then
-  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c sglang-engine -- python3 -c "import sglang; print(sglang.__version__)" 2>/dev/null || echo "0.5.12-cu130")
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c sglang-engine -- python3 -c "import sglang; print(sglang.__version__)" 2>/dev/null || echo "0.5.16-cu130")
 else
-  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c vllm-engine -- python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "0.25.1")
+  ENGINE_VER=$(kubectl exec -n llm-serving deploy/glm52-nvfp4-serving -c vllm-engine -- python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "0.26.0")
 fi
 METADATA_JSON=$(python3 -c 'import json, sys; print(json.dumps({"engine": sys.argv[1], "engine_version": sys.argv[2], "image": sys.argv[3], "launch_flags": sys.argv[4], "run_timestamp": sys.argv[5], "runs": 1}))' "${ENGINE}" "${ENGINE_VER}" "${IMAGE}" "${FLAGS}" "${RUN_TS}")
 
