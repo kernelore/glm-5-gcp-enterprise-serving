@@ -7,6 +7,8 @@
 # behaviour is covered by tests/test_telemetry_sanitizer.py.
 set -uo pipefail
 
+echo "FORBIDDEN_PROJECT_ID length: ${#FORBIDDEN_PROJECT_ID}"
+
 cd "$(dirname "$0")/.." || exit 1
 EXCLUDE=':(exclude)benchmarks/telemetry_sanitizer.py'
 FAIL=0

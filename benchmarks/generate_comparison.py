@@ -83,7 +83,8 @@ def get_suite_duration(suite_name: str, data: dict) -> float:
 def validate_provenance(vllm: dict, sglang: dict):
     """
     Validates engine identity, container image, engine version, timestamp formatting,
-    and interval monotonicity/non-overlap against explicit suite_start_ts / suite_end_ts boundaries.
+    and interval non-overlap against explicit suite_start_ts / suite_end_ts boundaries.
+    Enforces non-overlap of suite intervals without constraining execution order.
     """
     suites = ["standard", "massive", "soak", "saturation", "prefill"]
     for s in suites:
@@ -109,8 +110,7 @@ def validate_provenance(vllm: dict, sglang: dict):
             raise ValueError(f"PROVENANCE GATE FAILURE: results/sglang/{s}_results.json engine_version '{g_meta.get('engine_version')}' does not match expected '0.5.12'")
 
     for eng_name, eng_data in [("vllm", vllm), ("sglang", sglang)]:
-        prev_end_dt = None
-        prev_suite_name = None
+        intervals = []
         for s in suites:
             meta = get_metadata(eng_data[s])
             ts_str = meta.get("run_timestamp", "")
@@ -134,12 +134,14 @@ def validate_provenance(vllm: dict, sglang: dict):
             if curr_start_dt > curr_end_dt:
                 raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json has suite_start_ts after suite_end_ts")
             
-            if prev_end_dt is not None:
-                if curr_start_dt < prev_end_dt:
-                    raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json suite_start_ts ({start_ts}) overlaps/precedes previous suite {prev_suite_name} suite_end_ts ({prev_end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')})")
+            intervals.append((curr_start_dt, curr_end_dt, s, start_ts))
             
-            prev_end_dt = curr_end_dt
-            prev_suite_name = s
+        intervals.sort(key=lambda x: x[0])
+        for i in range(1, len(intervals)):
+            curr_start_dt, curr_end_dt, curr_suite, start_ts = intervals[i]
+            prev_start_dt, prev_end_dt, prev_suite, _ = intervals[i - 1]
+            if curr_start_dt < prev_end_dt:
+                raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{curr_suite}_results.json suite_start_ts ({start_ts}) overlaps/precedes previous suite {prev_suite} suite_end_ts ({prev_end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')})")
 
 def validate_parity_and_sanity(vllm: dict, sglang: dict):
     suites = ["standard", "massive", "soak", "saturation", "prefill"]

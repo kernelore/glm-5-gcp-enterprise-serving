@@ -198,6 +198,49 @@ except ValueError as e:
 '
 echo "    [OK] Check 10 passed: Suite timestamp gate correctly handles skip and overlap rejection paths."
 
+echo "--> Check 11: Verifying non-canonical execution order tolerance and overlap rejection..."
+python3 -c '
+import sys, json
+from pathlib import Path
+sys.path.insert(0, "benchmarks")
+from generate_comparison import validate_provenance, load_json
+
+root = Path("benchmarks/results")
+vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+
+# Deep copy for mutation
+v_noncanon = {s: json.loads(json.dumps(vllm_data[s])) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+if "soak_config" not in v_noncanon["soak"]: v_noncanon["soak"]["soak_config"] = {}
+if "benchmark_config" not in v_noncanon["massive"]: v_noncanon["massive"]["benchmark_config"] = {}
+
+# Case 1: Non-overlapping intervals in non-canonical order (soak 10:00-10:10 runs before massive 10:15-10:25) -> must pass
+v_noncanon["soak"]["soak_config"]["suite_start_ts"] = "2026-07-26T10:00:00Z"
+v_noncanon["soak"]["soak_config"]["suite_end_ts"] = "2026-07-26T10:10:00Z"
+v_noncanon["massive"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:15:00Z"
+v_noncanon["massive"]["benchmark_config"]["suite_end_ts"] = "2026-07-26T10:25:00Z"
+
+try:
+    validate_provenance(v_noncanon, sglang_data)
+    print("    [OK] Case 1 passed: Non-overlapping suites in non-canonical order (soak before massive) accepted without error.")
+except Exception as e:
+    print(f"ERROR: validate_provenance() rejected valid non-overlapping timestamps in non-canonical order: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Case 2: Genuinely overlapping intervals in non-canonical order (soak 10:00-10:10 overlaps massive 10:05-10:25) -> must fail
+v_noncanon["massive"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:05:00Z"
+try:
+    validate_provenance(v_noncanon, sglang_data)
+    print("ERROR: validate_provenance() failed to catch genuinely overlapping timestamps in non-canonical order!", file=sys.stderr)
+    sys.exit(1)
+except ValueError as e:
+    if "PROVENANCE GATE FAILURE" not in str(e):
+        print(f"ERROR: Expected PROVENANCE GATE FAILURE but got: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"    [OK] Case 2 passed: Caught expected interval overlap error in non-canonical order: {e}")
+'
+echo "    [OK] Check 11 passed: Interval gate correctly tolerates execution order while enforcing non-overlap."
+
 echo "=============================================================================="
-echo "=== ALL 10 REMEDIATION CHECKS PASSED ==="
+echo "=== ALL 11 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="
