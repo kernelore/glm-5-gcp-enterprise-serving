@@ -116,7 +116,7 @@ spec:
           mountPropagation: HostToContainer
       containers:
       - name: vllm-engine
-        image: ${SERVING_IMAGE}
+        image: ${VLLM_SERVING_IMAGE}
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c"]
         args:

@@ -116,7 +116,7 @@ spec:
           mountPropagation: HostToContainer
       containers:
       - name: sglang-engine
-        image: ${SERVING_IMAGE}
+        image: ${SGLANG_SERVING_IMAGE}
         imagePullPolicy: Always
         command: ["/bin/bash", "-c"]
         args:

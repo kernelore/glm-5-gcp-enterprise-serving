@@ -114,20 +114,28 @@ export VLLM_VIP="glm52-serving-svc.llm-serving.svc.cluster.local"
 export SERVING_VIP="${VLLM_VIP}"
 export INFERENCE_ENGINE="${INFERENCE_ENGINE:-vllm}"
 export INFERENCE_SERVER_LABEL="${INFERENCE_ENGINE}"
+VLLM_DEFAULT_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.26.0"
+SGLANG_DEFAULT_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/sglang-blackwell:v0.5.16-cu130"
+
 if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
-  export HPA_QUEUE_METRIC="sglang_num_queue_reqs|unknown"
-  export HPA_RUNNING_METRIC="sglang_num_running_reqs|unknown"
+  export HPA_QUEUE_METRIC="sglang:num_queue_reqs|gauge"
+  export HPA_RUNNING_METRIC="sglang:num_running_reqs|gauge"
   IMAGE_NAME="sglang-blackwell"
   IMAGE_TAG="v0.5.16-cu130"
   DOCKERFILE="Dockerfile.sglang"
+  export SERVING_IMAGE="${SERVING_IMAGE:-${SGLANG_DEFAULT_IMAGE}}"
+  export SGLANG_SERVING_IMAGE="${SERVING_IMAGE}"
+  export VLLM_SERVING_IMAGE="${VLLM_DEFAULT_IMAGE}"
 else
   export HPA_QUEUE_METRIC="vllm:num_requests_waiting|gauge"
   export HPA_RUNNING_METRIC="vllm:num_requests_running|gauge"
   IMAGE_NAME="vllm-blackwell"
   IMAGE_TAG="v0.26.0"
   DOCKERFILE="Dockerfile.vllm"
+  export SERVING_IMAGE="${SERVING_IMAGE:-${VLLM_DEFAULT_IMAGE}}"
+  export VLLM_SERVING_IMAGE="${SERVING_IMAGE}"
+  export SGLANG_SERVING_IMAGE="${SGLANG_DEFAULT_IMAGE}"
 fi
-export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/${IMAGE_NAME}:${IMAGE_TAG}"
 export BENCHMARK_MODE="${BENCHMARK_MODE:-soak}"
 export BENCHMARK_CONCURRENCY="${BENCHMARK_CONCURRENCY:-18}"
 export BENCHMARK_REQUESTS="${BENCHMARK_REQUESTS:-16}"
@@ -142,7 +150,7 @@ for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
     target_file="${GENERATED_DIR}/${basename}"
     echo "    Rendering ${basename}..."
     # shellcheck disable=SC2016
-    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${HPA_QUEUE_METRIC} ${HPA_RUNNING_METRIC} ${SERVING_IMAGE} ${SERVING_VIP} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA}' < "${template_file}" > "${target_file}"
+    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${HPA_QUEUE_METRIC} ${HPA_RUNNING_METRIC} ${SERVING_IMAGE} ${VLLM_SERVING_IMAGE} ${SGLANG_SERVING_IMAGE} ${SERVING_VIP} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA}' < "${template_file}" > "${target_file}"
   fi
 done
 echo "    [OK] All manifest templates rendered cleanly."
