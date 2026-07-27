@@ -9,6 +9,7 @@ prompt throughput.
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 import time
 import urllib.request
 
@@ -125,6 +126,8 @@ def measure_prefill(
     meta = json.loads(metadata) if isinstance(metadata, str) else metadata
   except Exception:
     meta = {}
+  if os.environ.get("BENCHMARK_RESTARTED_BEFORE_SUITE") == "true":
+    meta["engine_restarted_before_suite"] = True
   result["metadata"] = meta
   result["prefill_config"] = {
       "endpoint": endpoint,

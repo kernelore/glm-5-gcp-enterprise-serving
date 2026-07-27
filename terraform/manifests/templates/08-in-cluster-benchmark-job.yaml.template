@@ -68,7 +68,7 @@ data:
 
     wait_for_quiesce 300 15
 
-    if [ "${BENCHMARK_MODE}" = "prefill" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
+    if [ "${BENCHMARK_MODE}" = "prefill" ]; then
       echo "Running in-cluster prefill ingestion benchmark (isolated baseline)..."
       python3 /scripts/run_prefill_benchmark.py \
         --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \

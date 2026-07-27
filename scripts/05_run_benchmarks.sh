@@ -307,13 +307,29 @@ sys.stdout.write(output)
   if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
     kubectl cp -n llm-serving "${POD_NAME}:/results/saturation_results.json" "${RESULT_DIR}/saturation_results.json" || echo "WARNING: Could not copy saturation_results.json"
   fi
-  if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
+  if [ "${MODE}" = "prefill" ]; then
     kubectl cp -n llm-serving "${POD_NAME}:/results/prefill_results.json" "${RESULT_DIR}/prefill_results.json" || echo "WARNING: Could not copy prefill_results.json"
   fi
 
   # Signal pod that extraction is complete so it can exit 0 cleanly
   kubectl exec -n llm-serving "${POD_NAME}" -- touch /results/.extracted 2>/dev/null || true
   echo "    [OK] In-cluster benchmark job execution finished and results saved to ${RESULT_DIR}."
+
+  if [ "${MODE}" = "all" ]; then
+    echo ""
+    echo "------------------------------------------------------------------------------"
+    echo "--> Executing Cold-Engine Prefill Ingestion Suite (Isolated Baseline)..."
+    echo "------------------------------------------------------------------------------"
+    echo "    Restarting serving deployment to guarantee a cold cache and 0% prefix hits..."
+    kubectl rollout restart deployment/glm52-nvfp4-serving -n llm-serving 2>/dev/null || kubectl rollout restart deployment/glm52-sglang-serving -n llm-serving 2>/dev/null || true
+    echo "    Waiting for restarted serving pod to attach ROX volume and become Ready..."
+    kubectl rollout status deployment/glm52-nvfp4-serving -n llm-serving --timeout=900s 2>/dev/null || kubectl rollout status deployment/glm52-sglang-serving -n llm-serving --timeout=900s 2>/dev/null || true
+    sleep 15
+    echo "    Launching isolated in-cluster prefill benchmark..."
+    export BENCHMARK_RESTARTED_BEFORE_SUITE="true"
+    bash "$0" --mode prefill --in-cluster
+    unset BENCHMARK_RESTARTED_BEFORE_SUITE || true
+  fi
   exit 0
 fi
 
@@ -390,7 +406,7 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
 fi
 
 # 7. Execute Prefill Ingestion Benchmark Suite
-if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
+if [ "${MODE}" = "prefill" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> 6. Executing Prefill Ingestion Suite (8192 prompt tokens in / 16 out)..."
@@ -403,6 +419,22 @@ if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
   )
 
   python3 "${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" "${PREF_ARGS[@]}" || echo "WARNING: Prefill benchmark reported errors or timeouts."
+fi
+
+if [ "${MODE}" = "all" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  echo "--> 6. Executing Cold-Engine Prefill Ingestion Suite (Isolated Baseline)..."
+  echo "------------------------------------------------------------------------------"
+  echo "    Restarting serving deployment to guarantee a cold cache and 0% prefix hits..."
+  kubectl rollout restart deployment/glm52-nvfp4-serving -n llm-serving 2>/dev/null || kubectl rollout restart deployment/glm52-sglang-serving -n llm-serving 2>/dev/null || true
+  echo "    Waiting for restarted serving pod to attach ROX volume and become Ready..."
+  kubectl rollout status deployment/glm52-nvfp4-serving -n llm-serving --timeout=900s 2>/dev/null || kubectl rollout status deployment/glm52-sglang-serving -n llm-serving --timeout=900s 2>/dev/null || true
+  sleep 15
+  echo "    Launching isolated prefill benchmark..."
+  export BENCHMARK_RESTARTED_BEFORE_SUITE="true"
+  bash "$0" --mode prefill
+  unset BENCHMARK_RESTARTED_BEFORE_SUITE || true
 fi
 
 # 8. Display Benchmark Summary
