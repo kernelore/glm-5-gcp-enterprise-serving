@@ -256,6 +256,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     unset BENCHMARK_DURATION || true
   fi
   export BENCHMARK_METADATA="${METADATA_JSON}"
+  # shellcheck disable=SC2016
   python3 -c '
 import os, sys, re
 content = sys.stdin.read()
