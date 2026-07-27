@@ -407,6 +407,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 echo "    [OK] Check 13 passed: Rendered manifest tag verification and fail-closed absence checks verified."
 
 echo "--> Check 14: Verifying benchmark provenance probes carry no || echo fallback and assert explicit non-zero exits..."
+# shellcheck disable=SC2016
 python3 -c '
 from pathlib import Path
 import sys
