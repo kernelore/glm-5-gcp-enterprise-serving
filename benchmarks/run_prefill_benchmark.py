@@ -22,6 +22,22 @@ SYNTHETIC_8K = (
     " occur across all 8 GPUs. "
 ) * 64  # ~8192 tokens
 
+WARMUP_8K_1 = (
+    "In sovereign enterprise cloud environments on Google Kubernetes Engine, "
+    "distributed deep learning inference clusters utilize high-bandwidth "
+    "interconnects for tensor parallel model execution across multiple GPUs. "
+    "When processing extensive context windows and long input prompt sequences, "
+    "memory management and attention mechanisms operate dynamically. "
+) * 64
+
+WARMUP_8K_2 = (
+    "Modern generative artificial intelligence architectures deployed on "
+    "dedicated accelerated computing infrastructure require optimized KV cache "
+    "allocation and continuous batching scheduling algorithms. High throughput "
+    "token generation relies on efficient matrix multiplication kernels and "
+    "low latency inter-node communication protocols across all accelerators. "
+) * 64
+
 
 def measure_prefill(
     endpoint="http://localhost:8000/v1/completions",
@@ -31,6 +47,32 @@ def measure_prefill(
 ):
   start_dt = datetime.now(timezone.utc)
   suite_start_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+  warmup_count = 0
+  if os.environ.get("BENCHMARK_RESTARTED_BEFORE_SUITE") == "true" or True:
+    print("--> Sending 2 warmup requests (~8192 tok, different text) to initialize CUDA graphs and memory pools...")
+    for idx, wp in enumerate([WARMUP_8K_1, WARMUP_8K_2]):
+      try:
+        w_payload = {
+            "model": model,
+            "prompt": wp,
+            "max_tokens": 16,
+            "temperature": 0.1,
+        }
+        w_req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(w_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer fake-key"},
+            method="POST",
+        )
+        with urllib.request.urlopen(w_req, timeout=300) as w_resp:
+          w_resp.read()
+        warmup_count += 1
+        print(f"    [OK] Warmup {idx+1}/2 finished.")
+        time.sleep(2)
+      except Exception as e:
+        print(f"    [WARNING] Warmup {idx+1}/2 failed: {e}")
+
   payload = {
       "model": model,
       "prompt": SYNTHETIC_8K,
@@ -52,7 +94,7 @@ def measure_prefill(
 
   t_start = time.time()
   t_first = None
-  prompt_tokens = 8192
+  prompt_tokens = None
   has_exact_usage = False
 
   with urllib.request.urlopen(req, timeout=300) as resp:
@@ -99,10 +141,15 @@ def measure_prefill(
   suite_end_ts = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
   suite_duration_s = round((end_dt - start_dt).total_seconds(), 4)
   ttft = (t_first - t_start) if t_first else (t_end - t_start)
+
+  if prompt_tokens is None or not has_exact_usage:
+    raise RuntimeError("ERROR: Could not read exact prompt_tokens from stream usage. Refusing to default/fabricate prompt token count.")
+
   prefill_tok_s = prompt_tokens / ttft if ttft > 0 else 0.0
 
   result = {
       "prompt_tokens": prompt_tokens,
+      "has_exact_usage": has_exact_usage,
       "token_count_source": "usage" if has_exact_usage else "chunk_count_fallback",
       "ttft_sec": ttft,
       "ttft_ms": ttft * 1000.0,
@@ -128,6 +175,7 @@ def measure_prefill(
     meta = {}
   if os.environ.get("BENCHMARK_RESTARTED_BEFORE_SUITE") == "true":
     meta["engine_restarted_before_suite"] = True
+  meta["warmup_requests"] = warmup_count
   result["metadata"] = meta
   result["prefill_config"] = {
       "endpoint": endpoint,
