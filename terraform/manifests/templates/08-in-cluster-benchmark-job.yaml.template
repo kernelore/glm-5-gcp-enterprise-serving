@@ -20,6 +20,62 @@ data:
     import urllib.request, json, sys, time
     print("Testing gateway cluster connectivity...")
     '
+    wait_for_quiesce() {
+      local timeout="${1:-300}"
+      local settle_time="${2:-15}"
+      local required_zero_checks=3
+      local zero_count=0
+      local start_time=$(date +%s)
+      local metrics_url="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/metrics"
+
+      echo ""
+      echo "------------------------------------------------------------------------------"
+      echo "--> Verifying engine quiesce & draining in-flight work (timeout: ${timeout}s)..."
+      echo "------------------------------------------------------------------------------"
+      
+      while true; do
+        local now=$(date +%s)
+        local elapsed=$((now - start_time))
+        if [ "${elapsed}" -ge "${timeout}" ]; then
+          echo "ERROR: Engine failed to quiesce within ${timeout}s! In-flight requests did not drain to zero." >&2
+          exit 1
+        fi
+        local metrics_payload
+        if ! metrics_payload=$(curl -s --connect-timeout 3 --max-time 5 "${metrics_url}"); then
+          echo "    [CHECK] Failed to reach ${metrics_url}. Resetting consecutive zero check count."
+          zero_count=0
+        else
+          local inflight
+          inflight=$(printf '%s\n' "${metrics_payload}" | awk '/^[^#].*(num_requests_waiting|num_requests_running|num_queue_reqs|num_running_reqs)/ {sum += $NF} END {printf "%.0f", sum + 0}')
+          if [ -n "${inflight}" ] && [ "${inflight}" -eq 0 ] 2>/dev/null; then
+            zero_count=$((zero_count + 1))
+            echo "    [CHECK] In-flight requests: 0 (consecutive zero checks: ${zero_count}/${required_zero_checks})"
+            if [ "${zero_count}" -ge "${required_zero_checks}" ]; then
+              echo "    [OK] Engine quiesced successfully after ${elapsed}s."
+              break
+            fi
+          else
+            echo "    [CHECK] In-flight requests: ${inflight:-unknown}. Waiting for engine queue to drain..."
+            zero_count=0
+          fi
+        fi
+        sleep 5
+      done
+      echo "--> Quiesce confirmed. Waiting an additional ${settle_time}s settle period before next suite..."
+      sleep "${settle_time}"
+      echo "------------------------------------------------------------------------------"
+    }
+
+    wait_for_quiesce 300 15
+
+    if [ "${BENCHMARK_MODE}" = "prefill" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
+      echo "Running in-cluster prefill ingestion benchmark (isolated baseline)..."
+      python3 /scripts/run_prefill_benchmark.py \
+        --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/prefill_results.json || echo "WARNING: prefill benchmark reported errors."
+      wait_for_quiesce 300 15
+    fi
     if [ "${BENCHMARK_MODE}" = "standard" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
       echo "Running in-cluster standard benchmark..."
       python3 /scripts/benchmark_glm52.py \
@@ -29,6 +85,7 @@ data:
         --requests="${BENCHMARK_REQUESTS:-16}" \
         --metadata="$(cat /scripts/metadata.json)" \
         --output=/results/standard_results.json || echo "WARNING: standard benchmark reported errors."
+      wait_for_quiesce 300 15
     fi
     if [ "${BENCHMARK_MODE}" = "massive" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
       echo "Running in-cluster massive benchmark..."
@@ -39,6 +96,7 @@ data:
         --requests="${BENCHMARK_REQUESTS:-100}" \
         --metadata="$(cat /scripts/metadata.json)" \
         --output=/results/massive_results.json || echo "WARNING: massive benchmark reported errors."
+      wait_for_quiesce 300 15
     fi
     if [ "${BENCHMARK_MODE}" = "soak" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
       echo "Running in-cluster soak benchmark..."
@@ -49,6 +107,7 @@ data:
         --concurrency="${BENCHMARK_CONCURRENCY:-18}" \
         --metadata="$(cat /scripts/metadata.json)" \
         --output=/results/soak_results.json || echo "WARNING: soak benchmark reported errors."
+      wait_for_quiesce 300 15
     fi
     if [ "${BENCHMARK_MODE}" = "saturation" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
       echo "Running in-cluster saturation sweep benchmark..."
@@ -56,13 +115,7 @@ data:
         --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \
         --metadata="$(cat /scripts/metadata.json)" \
         --output=/results/saturation_results.json || echo "WARNING: saturation benchmark reported errors."
-    fi
-    if [ "${BENCHMARK_MODE}" = "prefill" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
-      echo "Running in-cluster prefill ingestion benchmark..."
-      python3 /scripts/run_prefill_benchmark.py \
-        --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \
-        --metadata="$(cat /scripts/metadata.json)" \
-        --output=/results/prefill_results.json || echo "WARNING: prefill benchmark reported errors."
+      wait_for_quiesce 300 15
     fi
     echo "In-cluster benchmark execution completed. Results in /results:"
     ls -lh /results/

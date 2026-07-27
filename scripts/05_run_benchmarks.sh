@@ -226,22 +226,35 @@ if [ "${IN_CLUSTER}" = "true" ]; then
 
   echo "    Rendering in-cluster benchmark Job manifest..."
   mkdir -p "${GENERATED_DIR}"
-  if [ "${MODE}" = "standard" ]; then
-    DEF_CONC=8; DEF_REQ=16; DEF_DUR=60
-  elif [ "${MODE}" = "massive" ]; then
-    DEF_CONC=20; DEF_REQ=100; DEF_DUR=300
-  elif [ "${MODE}" = "soak" ]; then
-    DEF_CONC=18; DEF_REQ=100; DEF_DUR=1800
-  else
-    DEF_CONC=8; DEF_REQ=16; DEF_DUR=600
-  fi
+  case "${MODE}" in
+    standard|massive|soak|saturation|prefill|all)
+      ;;
+    *)
+      echo "ERROR: Unrecognized benchmark mode '${MODE}'. Must be one of: standard, massive, soak, saturation, prefill, all." >&2
+      exit 1
+      ;;
+  esac
   export ENV_LABEL="${ENV_LABEL:-glm52-test}"
   export OWNER_LABEL="${OWNER_LABEL:-opensource-user}"
   export GATEWAY_MASTER_KEY="${GATEWAY_MASTER_KEY:-sk-glm52-master-secret-key-change-me}"
   export BENCHMARK_MODE="${MODE}"
-  export BENCHMARK_CONCURRENCY="${CONCURRENCY:-$DEF_CONC}"
-  export BENCHMARK_REQUESTS="${REQUESTS:-$DEF_REQ}"
-  export BENCHMARK_DURATION="${DURATION:-$DEF_DUR}"
+  export MIN_SUITE_SEPARATION_SEC="${MIN_SUITE_SEPARATION_SEC:-5.0}"
+
+  if [ -n "${CONCURRENCY:-}" ]; then
+    export BENCHMARK_CONCURRENCY="${CONCURRENCY}"
+  else
+    unset BENCHMARK_CONCURRENCY || true
+  fi
+  if [ -n "${REQUESTS:-}" ]; then
+    export BENCHMARK_REQUESTS="${REQUESTS}"
+  else
+    unset BENCHMARK_REQUESTS || true
+  fi
+  if [ -n "${DURATION:-}" ]; then
+    export BENCHMARK_DURATION="${DURATION}"
+  else
+    unset BENCHMARK_DURATION || true
+  fi
   export BENCHMARK_METADATA="${METADATA_JSON}"
   envsubst < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
 

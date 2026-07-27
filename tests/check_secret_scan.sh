@@ -19,6 +19,10 @@ if git grep -nE 'sk-[a-zA-Z0-9-]{16,}' -- "$EXCLUDE" \
   echo "ERROR: Found potential exposed API keys!" >&2; FAIL=1
 fi
 
+if git grep -nE 'hf_[A-Za-z0-9]{34,}' -- "$EXCLUDE"; then
+  echo "ERROR: Found potential exposed Hugging Face API token (hf_...) in git-tracked files!" >&2; FAIL=1
+fi
+
 if git grep -nE '/usr/local/google/home/[a-zA-Z0-9_-]|/home/[a-zA-Z0-9_-]' -- "$EXCLUDE" \
    | grep -vE '/home/(kubernetes|runner)/'; then
   echo "ERROR: Found local filesystem home paths in repository!" >&2; FAIL=1

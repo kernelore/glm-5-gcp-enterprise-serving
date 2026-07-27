@@ -256,11 +256,56 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
         if [ "${POPULATE_WEIGHTS_CACHE:-false}" = "true" ] && [ -n "${GCS_WEIGHTS_BUCKET:-}" ]; then
           echo "--> POPULATE_WEIGHTS_CACHE=true: Seeding persistent GCS cache bucket (${GCS_WEIGHTS_BUCKET})..."
           BUCKET_ROOT="$(printf '%s' "${GCS_WEIGHTS_BUCKET}" | sed -E 's#(gs://[^/]+).*#\1#')"
-          gcloud storage buckets create "${BUCKET_ROOT}" --project="${PROJECT_ID}" --location="${REGION}" --quiet 2>/dev/null || true
-          kubectl run glm52-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"glm52-workload-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-glm52-weights-staging"}}]}}' || true
-          kubectl wait --for=condition=Ready pod/glm52-cache-seeder -n llm-serving --timeout=300s || true
-          kubectl logs pod/glm52-cache-seeder -n llm-serving -f || true
-          kubectl delete pod glm52-cache-seeder -n llm-serving --ignore-not-found=true
+          if ! gcloud storage buckets describe "${BUCKET_ROOT}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            echo "    Bucket ${BUCKET_ROOT} does not exist. Creating..."
+            if ! gcloud storage buckets create "${BUCKET_ROOT}" --project="${PROJECT_ID}" --location="${REGION}" --quiet; then
+              echo "ERROR: Failed to create GCS cache bucket ${BUCKET_ROOT}!" >&2; exit 1
+            fi
+          else
+            echo "    Bucket ${BUCKET_ROOT} already exists."
+          fi
+          kubectl delete pod glm52-cache-seeder -n llm-serving --ignore-not-found=true >/dev/null 2>&1
+          if ! kubectl run glm52-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"glm52-workload-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-glm52-weights-staging"}}]}}'; then
+            echo "ERROR: Failed to launch glm52-cache-seeder pod!" >&2; exit 1
+          fi
+          echo "--> Waiting for GCS cache seeder pod to complete (timeout: 3600s)..."
+          SEEDER_START=$(date +%s); SEEDER_TIMEOUT=3600
+          while true; do
+            SEEDER_PHASE=$(kubectl get pod glm52-cache-seeder -n llm-serving -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            NOW=$(date +%s); ELAPSED=$((NOW - SEEDER_START))
+            if [ "${SEEDER_PHASE}" = "Succeeded" ]; then
+              echo "    [OK] GCS cache seeder pod completed successfully in ${ELAPSED}s."
+              kubectl logs pod/glm52-cache-seeder -n llm-serving --tail=50 || true
+              break
+            elif [ "${SEEDER_PHASE}" = "Failed" ]; then
+              echo "ERROR: GCS cache seeder pod failed! Fetching logs:" >&2
+              kubectl logs pod/glm52-cache-seeder -n llm-serving --tail=100 || true
+              exit 1
+            elif [ "${ELAPSED}" -gt "${SEEDER_TIMEOUT}" ]; then
+              echo "ERROR: GCS cache seeder pod timed out after ${SEEDER_TIMEOUT}s." >&2
+              kubectl logs pod/glm52-cache-seeder -n llm-serving --tail=100 || true
+              exit 1
+            fi
+            sleep 10
+          done
+          SEEDER_EXIT=$(kubectl get pod glm52-cache-seeder -n llm-serving -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}' 2>/dev/null || echo "0")
+          if [ "${SEEDER_EXIT}" != "0" ] && [ -n "${SEEDER_EXIT}" ]; then
+            echo "ERROR: Seeder container terminated with non-zero exit code ${SEEDER_EXIT}!" >&2; exit 1
+          fi
+          echo "--> Verifying GCS weights cache bucket contents (${GCS_WEIGHTS_BUCKET})..."
+          # shellcheck disable=SC2126
+          OBJ_COUNT=$(gcloud storage ls "${GCS_WEIGHTS_BUCKET}/**" 2>/dev/null | grep -v 'gs://.*/$' | wc -l | tr -d ' ' || echo "0")
+          TOTAL_BYTES=$(gcloud storage du -s "${GCS_WEIGHTS_BUCKET}" 2>/dev/null | awk '{print $1}' || echo "0")
+          echo "    Found ${OBJ_COUNT} object shards totaling ${TOTAL_BYTES} bytes in ${GCS_WEIGHTS_BUCKET}."
+          if [ "${OBJ_COUNT}" -lt 47 ]; then
+            echo "ERROR: Expected at least 47 object shards in GCS weights bucket, found ${OBJ_COUNT}!" >&2; exit 1
+          fi
+          MIN_BYTES=450000000000
+          if [ "${TOTAL_BYTES}" -lt "${MIN_BYTES}" ]; then
+            echo "ERROR: Expected ~465 GB in GCS weights bucket, but found only ${TOTAL_BYTES} bytes (< ${MIN_BYTES})!" >&2; exit 1
+          fi
+          echo "    [OK] GCS cache bucket verification passed (${OBJ_COUNT} shards, ${TOTAL_BYTES} bytes)."
+          kubectl delete pod glm52-cache-seeder -n llm-serving --ignore-not-found=true >/dev/null 2>&1
         fi
         echo "--> Releasing READ_WRITE volume lock by removing completed staging job, PVC, and PV..."
         kubectl delete job glm52-weight-staging-job -n llm-serving --ignore-not-found=true

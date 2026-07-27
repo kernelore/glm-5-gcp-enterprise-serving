@@ -5,8 +5,9 @@ import urllib.request
 
 def send_chat_completion():
     port = os.environ.get("GATEWAY_PORT", "4000")
+    host = os.environ.get("GATEWAY_HOST", os.environ.get("GATEWAY_VIP", "localhost"))
     master_key = os.environ.get("GATEWAY_MASTER_KEY", "sk-glm52-master-secret-key-change-me")
-    url = f"http://localhost:{port}/v1/chat/completions"
+    url = f"http://{host}:{port}/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {master_key}",
         "Content-Type": "application/json"

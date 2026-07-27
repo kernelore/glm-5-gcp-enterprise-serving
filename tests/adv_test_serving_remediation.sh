@@ -97,14 +97,17 @@ echo "    [OK] Check 4 passed: All rendered manifests passed kubeconform schema 
 # ------------------------------------------------------------------------------
 # Check 5: Clean execution of benchmarks/generate_comparison.py & zero diff
 # ------------------------------------------------------------------------------
-echo "--> Check 5: Verifying benchmarks/generate_comparison.py cleanly executes with zero README.md diff..."
+echo "--> Check 5: Verifying benchmarks/generate_comparison.py cleanly executes and is idempotent..."
+cp README.md /tmp/README.md.before_check5
 python3 benchmarks/generate_comparison.py >/dev/null
-if ! git diff --exit-code README.md >/dev/null; then
+if ! cmp -s README.md /tmp/README.md.before_check5; then
   echo "ERROR: Check 5 failed: benchmarks/generate_comparison.py modified README.md!" >&2
-  git diff README.md >&2
+  diff -u /tmp/README.md.before_check5 README.md >&2 || true
+  rm -f /tmp/README.md.before_check5
   exit 1
 fi
-echo "    [OK] Check 5 passed: Benchmark comparison generated cleanly with zero diff against README.md."
+rm -f /tmp/README.md.before_check5
+echo "    [OK] Check 5 passed: Benchmark comparison generated cleanly and idempotently (zero change to README.md)."
 
 # ------------------------------------------------------------------------------
 # Check 6: Adversarial Proof of Provenance Gate
@@ -164,36 +167,52 @@ echo "    [OK] Check 9 passed: Secret scan passed cleanly."
 # ------------------------------------------------------------------------------
 # Check 10: Adversarial Proof of Suite Timestamp Gate
 # ------------------------------------------------------------------------------
-echo "--> Check 10: Adversarial Proof of Suite Timestamp Gate (testing skip and overlap rejection)..."
+echo "--> Check 10: Adversarial Proof of Suite Timestamp Gate (testing absence, overlap, and cooldown separation rejection)..."
+export MIN_SUITE_SEPARATION_SEC="5.0"
 python3 -c '
 import sys
 import io
-from contextlib import redirect_stdout
+import os
+import datetime
 from pathlib import Path
 
 sys.path.insert(0, "benchmarks")
 from generate_comparison import validate_provenance, load_json
 
+os.environ["MIN_SUITE_SEPARATION_SEC"] = "5.0"
 root = Path("benchmarks/results")
 vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 
-# Skip path: ensure baseline JSONs (lacking suite_start_ts) print informational notice and do not fail
+def space_out(data_dict, gap_sec=10):
+    base = datetime.datetime(2026, 7, 26, 6, 0, 0, tzinfo=datetime.timezone.utc)
+    for i, s in enumerate(["standard", "massive", "soak", "saturation", "prefill"]):
+        cfg_key = "soak_config" if s == "soak" else "benchmark_config"
+        if cfg_key not in data_dict[s]: data_dict[s][cfg_key] = {}
+        start_t = base + datetime.timedelta(seconds=i*(600+gap_sec))
+        end_t = start_t + datetime.timedelta(seconds=600)
+        data_dict[s][cfg_key]["suite_start_ts"] = start_t.strftime("%Y-%m-%dT%H:%M:%SZ")
+        data_dict[s][cfg_key]["suite_end_ts"] = end_t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+space_out(vllm_data); space_out(sglang_data)
+
+# Absence rejection path: ensure missing suite_start_ts raises ValueError naming file and missing field
 vllm_no_ts = {s: dict(vllm_data[s]) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 vllm_no_ts["standard"] = dict(vllm_data["standard"])
 vllm_no_ts["standard"]["benchmark_config"] = dict(vllm_data["standard"].get("benchmark_config", {}))
 vllm_no_ts["standard"]["benchmark_config"].pop("suite_start_ts", None)
-vllm_no_ts["standard"]["benchmark_config"].pop("suite_end_ts", None)
-buf = io.StringIO()
-with redirect_stdout(buf):
+try:
     validate_provenance(vllm_no_ts, sglang_data)
-out = buf.getvalue()
-if "NOTE: Skipping interval overlap checks for vllm standard" not in out:
-    print("ERROR: validate_provenance() failed to print skip notice for baseline without suite_start_ts!", file=sys.stderr)
+    print("ERROR: validate_provenance() failed to catch missing suite_start_ts!", file=sys.stderr)
     sys.exit(1)
-print("    [OK] Skip path verified: Informational notice printed without error when suite_start_ts is absent.")
+except ValueError as e:
+    err_str = str(e)
+    if "suite_start_ts" not in err_str or "standard" not in err_str:
+        print(f"ERROR: Expected error naming field and suite, got: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"    [OK] Caught expected timestamp absence error: {e}")
 
-# Rejection path: inject overlapping suite_start_ts and suite_end_ts
+# Overlap rejection path: inject overlapping suite_start_ts and suite_end_ts
 vllm_overlap = {s: dict(vllm_data[s]) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 vllm_overlap["standard"] = dict(vllm_data["standard"])
 vllm_overlap["standard"]["benchmark_config"] = dict(vllm_data["standard"].get("benchmark_config", {}))
@@ -210,19 +229,54 @@ try:
     sys.exit(1)
 except ValueError as e:
     print(f"    [OK] Caught expected interval overlap error: {e}")
+
+# Cooldown separation rejection path: inject consecutive suites with gap < MIN_SUITE_SEPARATION_SEC (e.g. 2s < 5s)
+vllm_cooldown = {s: dict(vllm_data[s]) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+vllm_cooldown["standard"] = dict(vllm_data["standard"])
+vllm_cooldown["standard"]["benchmark_config"] = dict(vllm_data["standard"].get("benchmark_config", {}))
+vllm_cooldown["standard"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:00:00Z"
+vllm_cooldown["standard"]["benchmark_config"]["suite_end_ts"] = "2026-07-26T10:10:00Z"
+vllm_cooldown["massive"] = dict(vllm_data["massive"])
+vllm_cooldown["massive"]["benchmark_config"] = dict(vllm_data["massive"].get("benchmark_config", {}))
+vllm_cooldown["massive"]["benchmark_config"]["suite_start_ts"] = "2026-07-26T10:10:02Z"
+vllm_cooldown["massive"]["benchmark_config"]["suite_end_ts"] = "2026-07-26T10:20:02Z"
+
+try:
+    validate_provenance(vllm_cooldown, sglang_data)
+    print("ERROR: validate_provenance() failed to catch cooldown separation violation!", file=sys.stderr)
+    sys.exit(1)
+except ValueError as e:
+    err_str = str(e)
+    if "separation" not in err_str.lower() and "cooldown" not in err_str.lower() and "interval" not in err_str.lower():
+        print(f"ERROR: Expected separation/cooldown error, got: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"    [OK] Caught expected cooldown separation error: {e}")
 '
-echo "    [OK] Check 10 passed: Suite timestamp gate correctly handles skip and overlap rejection paths."
+echo "    [OK] Check 10 passed: Suite timestamp gate correctly handles absence, overlap, and cooldown separation rejection paths."
 
 echo "--> Check 11: Verifying non-canonical execution order tolerance and overlap rejection..."
 python3 -c '
-import sys, json
+import sys, json, os, datetime
 from pathlib import Path
 sys.path.insert(0, "benchmarks")
 from generate_comparison import validate_provenance, load_json
 
+os.environ["MIN_SUITE_SEPARATION_SEC"] = "5.0"
 root = Path("benchmarks/results")
 vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+
+def space_out(data_dict, gap_sec=10):
+    base = datetime.datetime(2026, 7, 26, 6, 0, 0, tzinfo=datetime.timezone.utc)
+    for i, s in enumerate(["standard", "massive", "soak", "saturation", "prefill"]):
+        cfg_key = "soak_config" if s == "soak" else "benchmark_config"
+        if cfg_key not in data_dict[s]: data_dict[s][cfg_key] = {}
+        start_t = base + datetime.timedelta(seconds=i*(600+gap_sec))
+        end_t = start_t + datetime.timedelta(seconds=600)
+        data_dict[s][cfg_key]["suite_start_ts"] = start_t.strftime("%Y-%m-%dT%H:%M:%SZ")
+        data_dict[s][cfg_key]["suite_end_ts"] = end_t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+space_out(vllm_data); space_out(sglang_data)
 
 # Deep copy for mutation
 v_noncanon = {s: json.loads(json.dumps(vllm_data[s])) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
@@ -439,6 +493,13 @@ if probes_checked != 4:
 '
 echo "    [OK] Check 14 passed: Provenance probes carry no || echo fallback and assert explicit non-zero exits (lint against reintroduction, not a behavioural test)."
 
+# ------------------------------------------------------------------------------
+# Check 15: Offline Verifier Failure Harness
+# ------------------------------------------------------------------------------
+echo "--> Check 15: Executing offline verifier failure harness (adv_test_verify_cluster_failures.sh)..."
+bash tests/adv_test_verify_cluster_failures.sh >/dev/null
+echo "    [OK] Check 15 passed: Offline verifier failure harness verified all 4 failure states."
+
 echo "=============================================================================="
-echo "=== ALL 14 REMEDIATION CHECKS PASSED ==="
+echo "=== ALL 15 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="

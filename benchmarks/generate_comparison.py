@@ -149,19 +149,34 @@ def validate_rendered_manifests(deploy_script_path: str = "scripts/03_deploy_wor
                 if norm_tag != pins[eng]:
                     raise ValueError(f"PROVENANCE GATE FAILURE: Rendered manifest {manifest_name} image tag '{norm_tag}' (from '{tag}') does not match deploy pin '{pins[eng]}'")
 
+def get_req_cfg_val(data: dict, suite: str, cfg_key: str | None, field: str):
+    if cfg_key:
+        cfg = data.get(cfg_key)
+        if not isinstance(cfg, dict) or cfg.get(field) is None:
+            raise ValueError(f"PROVENANCE GATE FAILURE: Missing required config key '{field}' in {cfg_key} of {suite}_results.json for label generation")
+        val = cfg[field]
+    else:
+        if data.get(field) is None:
+            raise ValueError(f"PROVENANCE GATE FAILURE: Missing required field '{field}' in {suite}_results.json for label generation")
+        val = data[field]
+    if not isinstance(val, (int, float)) or val <= 0:
+        raise ValueError(f"PROVENANCE GATE FAILURE: Invalid value '{val}' for '{field}' in {suite}_results.json")
+    return val
+
 def get_suite_timestamps(data: dict) -> tuple:
+    start_ts, end_ts = None, None
     for key in ["benchmark_config", "soak_config", "sweep_config", "prefill_config", "metadata"]:
         cfg = data.get(key)
         if isinstance(cfg, dict):
-            start_ts = cfg.get("suite_start_ts")
-            end_ts = cfg.get("suite_end_ts")
-            if start_ts and end_ts:
-                return start_ts, end_ts
-    start_ts = data.get("suite_start_ts")
-    end_ts = data.get("suite_end_ts")
-    if start_ts and end_ts:
-        return start_ts, end_ts
-    return None, None
+            if start_ts is None:
+                start_ts = cfg.get("suite_start_ts")
+            if end_ts is None:
+                end_ts = cfg.get("suite_end_ts")
+    if start_ts is None:
+        start_ts = data.get("suite_start_ts")
+    if end_ts is None:
+        end_ts = data.get("suite_end_ts")
+    return start_ts, end_ts
 
 def get_suite_duration(suite_name: str, data: dict) -> float:
     dur = 0.0
@@ -221,9 +236,10 @@ def validate_provenance(vllm: dict, sglang: dict, deploy_script_path: str = "scr
                 raise ValueError(f"PROVENANCE GATE FAILURE: Invalid run_timestamp '{ts_str}' in results/{eng_name}/{s}_results.json: {e}")
 
             start_ts, end_ts = get_suite_timestamps(eng_data[s])
-            if not start_ts or not end_ts:
-                print(f"NOTE: Skipping interval overlap checks for {eng_name} {s} (suite_start_ts not recorded in baseline file).")
-                continue
+            if not start_ts:
+                raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json is missing required field suite_start_ts")
+            if not end_ts:
+                raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{s}_results.json is missing required field suite_end_ts")
             try:
                 curr_start_dt = datetime.fromisoformat(start_ts.replace("Z", "+00:00"))
                 curr_end_dt = datetime.fromisoformat(end_ts.replace("Z", "+00:00"))
@@ -236,12 +252,15 @@ def validate_provenance(vllm: dict, sglang: dict, deploy_script_path: str = "scr
             intervals.append((curr_start_dt, curr_end_dt, s, start_ts))
             
         intervals.sort(key=lambda x: x[0])
+        min_cooldown = float(os.environ.get("MIN_SUITE_SEPARATION_SEC", 0.0))
         for i in range(1, len(intervals)):
             curr_start_dt, curr_end_dt, curr_suite, start_ts = intervals[i]
             prev_start_dt, prev_end_dt, prev_suite, _ = intervals[i - 1]
             if curr_start_dt < prev_end_dt:
                 raise ValueError(f"PROVENANCE GATE FAILURE: results/{eng_name}/{curr_suite}_results.json suite_start_ts ({start_ts}) overlaps/precedes previous suite {prev_suite} suite_end_ts ({prev_end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')})")
-
+            gap_seconds = (curr_start_dt - prev_end_dt).total_seconds()
+            if gap_seconds < min_cooldown:
+                raise ValueError(f"PROVENANCE GATE FAILURE [Insufficient Cooldown]: results/{eng_name}/{curr_suite}_results.json started at {start_ts}, only {gap_seconds:.2f}s after previous suite {prev_suite} ended at {prev_end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')} (minimum required separation is {min_cooldown}s)")
 def validate_parity_and_sanity(vllm: dict, sglang: dict):
     suites = ["standard", "massive", "soak", "saturation", "prefill"]
     for s in suites:
@@ -321,7 +340,7 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
     lines.append("All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (8x NVIDIA B200 HGX, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, tensor parallelism TP=8) and identical model weights (`nvidia/GLM-5.2-NVFP4`) mounted read-only from a shared Hyperdisk ML ROX volume. Both engines served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).")
     lines.append("")
     lines.append("#### Methodology & Provenance Protocol")
-    lines.append("* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets and radix cache flushing to ensure 0% prefix-cache hits (measuring true cold decoding and prefill throughput).")
+    lines.append("* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets (measuring cold decoding and prefill throughput).")
     lines.append("* **Sequential Execution & Drain Protocol:** To prevent resource contention and queue contamination, benchmark suites were executed strictly sequentially with full queue drain intervals between runs.")
     lines.append("* **Engine Provenance Verification:** Engine identity and container provenance were verified prior to every suite by inspecting `/metrics` endpoints (`^vllm:` vs `^sglang:`) and deployment container images. Collection timestamps recorded in suite metadata:")
     
@@ -340,20 +359,27 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
     lines.append(f"| Workload Suite | Metric | {v_label} | {g_label} | Delta ($\\Delta$) |")
     lines.append("| :--- | :--- | :--- | :--- | :--- |")
     
+    std_c = get_req_cfg_val(vllm["standard"], "standard", "benchmark_config", "concurrency")
+    std_tok = get_req_cfg_val(vllm["standard"], "standard", "benchmark_config", "max_tokens")
+    mass_c = get_req_cfg_val(vllm["massive"], "massive", "benchmark_config", "concurrency")
+    mass_tok = get_req_cfg_val(vllm["massive"], "massive", "benchmark_config", "max_tokens")
+    soak_c = get_req_cfg_val(vllm["soak"], "soak", "soak_config", "concurrency")
+    soak_dur = get_req_cfg_val(vllm["soak"], "soak", "soak_config", "duration")
+
     suites_t1 = [
-        ("Standard Suite ($c=8$, $128\\text{ tok}$)", "standard", [
+        (f"Standard Suite ($c={std_c}$, ${std_tok}\\text{{ tok}}$)", "standard", [
             ("TTFT P50 (ms)", lambda d: d["metrics"]["ttft_ms"]["p50"], False, "{:.2f}"),
             ("TPOT mean (ms)", lambda d: d["metrics"]["tpot_ms"]["mean"], False, "{:.2f}"),
             ("Throughput (tok/s)", lambda d: d["throughput_tokens_sec"], True, "{:.2f}"),
             ("Success rate", lambda d: 100.0 * d["successful_requests"] / max(1, d["total_requests"]), True, "{:.1f}%"),
         ]),
-        ("Massive Stress ($c=20$, $256\\text{ tok}$)", "massive", [
+        (f"Massive Stress ($c={mass_c}$, ${mass_tok}\\text{{ tok}}$)", "massive", [
             ("TTFT P50 (ms)", lambda d: d["metrics"]["ttft_ms"]["p50"], False, "{:.2f}"),
             ("TPOT mean (ms)", lambda d: d["metrics"]["tpot_ms"]["mean"], False, "{:.2f}"),
             ("Throughput (tok/s)", lambda d: d["throughput_tokens_sec"], True, "{:.2f}"),
             ("Success rate", lambda d: 100.0 * d["successful_requests"] / max(1, d["total_requests"]), True, "{:.1f}%"),
         ]),
-        ("Endurance Soak ($c=18$, $1800\\text{s}$)", "soak", [
+        (f"Endurance Soak ($c={soak_c}$, ${soak_dur}\\text{{s}}$)", "soak", [
             ("TTFT P50 (ms)", lambda d: d["metrics"]["ttft_ms"]["p50"], False, "{:.2f}"),
             ("TPOT mean (ms)", lambda d: d["metrics"]["tpot_ms"]["mean"], False, "{:.2f}"),
             ("Throughput (tok/s)", lambda d: d["throughput_tokens_sec"], True, "{:.2f}"),
@@ -370,7 +396,7 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
             lines.append(f"| {w_col} | {m_label} | {fmt.format(val_v)} | {fmt.format(val_g)} | **{delta_str}** |")
 
     lines.append("")
-    lines.append("#### Table 2: Concurrency Saturation Sweep (Direct Port 8000, 0% Cache Hits)")
+    lines.append("#### Table 2: Concurrency Saturation Sweep (Direct Port 8000)")
     lines.append(f"| Concurrency ($c$) | {v_label} tok/s | {g_label} tok/s | Throughput $\\Delta$ | {v_label} TTFT P99 (s) | {g_label} TTFT P99 (s) | TTFT P99 $\\Delta$ |")
     lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
@@ -386,7 +412,8 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
         lines.append(f"| $c={c}$ | {v_tok:.2f} | {g_tok:.2f} | **{d_tok}** | {v_ttft_s:.4f} s | {g_ttft_s:.4f} s | **{d_ttft}** |")
 
     lines.append("")
-    lines.append("#### Table 3: Prompt Prefill Ingestion Stress ($8,192\\text{ prompt tok} \\to 16\\text{ out}$)")
+    prefill_tok = get_req_cfg_val(vllm["prefill"], "prefill", None, "prompt_tokens")
+    lines.append(f"#### Table 3: Prompt Prefill Ingestion Stress (${prefill_tok:,}\\text{{ prompt tok}} \\to 16\\text{{ out}}$)")
     lines.append(f"| Metric | {v_label} | {g_label} | Delta ($\\Delta$) |")
     lines.append("| :--- | :--- | :--- | :--- |")
     
@@ -413,7 +440,7 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
     if gp_tok > vp_tok:
         prefill_text = f"SGLang demonstrated superior prompt ingestion throughput ({gp_tok:.2f} prompt tok/s vs vLLM {vp_tok:.2f} prompt tok/s)."
     else:
-        prefill_text = f"vLLM demonstrated superior prompt ingestion throughput ({vp_tok:.2f} prompt tok/s vs SGLang {gp_tok:.2f} prompt tok/s), making it preferable for raw long-context batch prefill without cache hits."
+        prefill_text = f"vLLM demonstrated superior prompt ingestion throughput ({vp_tok:.2f} prompt tok/s vs SGLang {gp_tok:.2f} prompt tok/s), making it preferable for raw long-context batch prefill."
         
     lines.append(f"* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. {prefill_text} vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.")
     

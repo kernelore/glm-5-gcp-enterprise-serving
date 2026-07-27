@@ -123,7 +123,7 @@ To switch engines on a live cluster:
 All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (8x NVIDIA B200 HGX, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, tensor parallelism TP=8) and identical model weights (`nvidia/GLM-5.2-NVFP4`) mounted read-only from a shared Hyperdisk ML ROX volume. Both engines served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).
 
 #### Methodology & Provenance Protocol
-* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets and radix cache flushing to ensure 0% prefix-cache hits (measuring true cold decoding and prefill throughput).
+* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets (measuring cold decoding and prefill throughput).
 * **Sequential Execution & Drain Protocol:** To prevent resource contention and queue contamination, benchmark suites were executed strictly sequentially with full queue drain intervals between runs.
 * **Engine Provenance Verification:** Engine identity and container provenance were verified prior to every suite by inspecting `/metrics` endpoints (`^vllm:` vs `^sglang:`) and deployment container images. Collection timestamps recorded in suite metadata:
   * **vLLM** (`vllm-blackwell:v0.26.0`): Standard (2026-07-27T07:41:30Z), Massive (2026-07-27T07:41:30Z), Soak (2026-07-27T07:41:30Z), Saturation (2026-07-27T07:41:30Z), Prefill (2026-07-27T07:41:30Z).
@@ -136,16 +136,16 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 |  | TPOT mean (ms) | 11.11 | 8.70 | **+21.69%** |
 |  | Throughput (tok/s) | 567.54 | 600.17 | **+5.75%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Massive Stress ($c=20$, $256\text{ tok}$) | TTFT P50 (ms) | 321.80 | 6568.61 | **-1941.21%** |
+| Massive Stress ($c=8$, $256\text{ tok}$) | TTFT P50 (ms) | 321.80 | 6568.61 | **-1941.21%** |
 |  | TPOT mean (ms) | 10.13 | 8.84 | **+12.73%** |
 |  | Throughput (tok/s) | 708.46 | 335.62 | **-52.63%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Endurance Soak ($c=18$, $1800\text{s}$) | TTFT P50 (ms) | 173.45 | 392.10 | **-126.06%** |
+| Endurance Soak ($c=8$, $600\text{s}$) | TTFT P50 (ms) | 173.45 | 392.10 | **-126.06%** |
 |  | TPOT mean (ms) | 10.66 | 10.87 | **-1.97%** |
 |  | Throughput (tok/s) | 692.79 | 648.15 | **-6.44%** |
 |  | Completed cycles | 1630 | 1525 | **-6.44%** |
 
-#### Table 2: Concurrency Saturation Sweep (Direct Port 8000, 0% Cache Hits)
+#### Table 2: Concurrency Saturation Sweep (Direct Port 8000)
 | Concurrency ($c$) | vLLM (0.26.0) tok/s | SGLang (0.5.16) tok/s | Throughput $\Delta$ | vLLM (0.26.0) TTFT P99 (s) | SGLang (0.5.16) TTFT P99 (s) | TTFT P99 $\Delta$ |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | $c=1$ | 121.93 | 149.84 | **+22.89%** | 0.1873 s | 0.2392 s | **-27.68%** |
@@ -154,7 +154,7 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 | $c=32$ | 2192.73 | 2370.05 | **+8.09%** | 0.9885 s | 1.0824 s | **-9.50%** |
 | $c=64$ | 3450.73 | 3123.23 | **-9.49%** | 1.7940 s | 17.4275 s | **-871.42%** |
 
-#### Table 3: Prompt Prefill Ingestion Stress ($8,192\text{ prompt tok} \to 16\text{ out}$)
+#### Table 3: Prompt Prefill Ingestion Stress ($5,313\text{ prompt tok} \to 16\text{ out}$)
 | Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- |
 | Prefill throughput | 105825.12 prompt tok/s | 1797.26 prompt tok/s | **-98.30%** |
@@ -163,7 +163,7 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 #### Technical Guidance: When to Choose vLLM vs SGLang
 
 * **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 8.70 ms vs vLLM 11.11 ms) and sustained stability during 30-minute endurance soak testing.
-* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. vLLM demonstrated superior prompt ingestion throughput (105825.12 prompt tok/s vs SGLang 1797.26 prompt tok/s), making it preferable for raw long-context batch prefill without cache hits. vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.
+* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. vLLM demonstrated superior prompt ingestion throughput (105825.12 prompt tok/s vs SGLang 1797.26 prompt tok/s), making it preferable for raw long-context batch prefill. vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.
 
 <!-- ENGINE_COMPARISON_END -->
 
@@ -201,6 +201,9 @@ Google Cloud Product               | Scope                                      
 ## 📈 Horizontal Scaling & Multi-Node Architecture
 
 While **1x `a4-highgpu-8g` node ($TP=8$) serves as the turnkey MVP baseline**, the serving architecture separates **intra-node model execution** from **inter-node scale-out**, allowing the cluster to scale elastically from $1 \leftrightarrow N$ nodes based on real-time inferencing demand:
+
+> [!NOTE]
+> **Methodology & Scope Note:** All published benchmark figures and performance measurements in this repository represent single-node ($TP=8$) execution on 1x `a4-highgpu-8g` instance. The multi-node ($DP=N$) horizontal scale-out and concurrent ROX volume mounting capabilities described below are architectural features that are currently unexercised in our benchmark evaluation suites.
 
 ### 1. Zero-Copy Weight Fan-Out (`Hyperdisk ML ROX`)
 
