@@ -179,9 +179,14 @@ vllm_data = {s: load_json(root / "vllm" / f"{s}_results.json") for s in ["standa
 sglang_data = {s: load_json(root / "sglang" / f"{s}_results.json") for s in ["standard", "massive", "soak", "saturation", "prefill"]}
 
 # Skip path: ensure baseline JSONs (lacking suite_start_ts) print informational notice and do not fail
+vllm_no_ts = {s: dict(vllm_data[s]) for s in ["standard", "massive", "soak", "saturation", "prefill"]}
+vllm_no_ts["standard"] = dict(vllm_data["standard"])
+vllm_no_ts["standard"]["benchmark_config"] = dict(vllm_data["standard"].get("benchmark_config", {}))
+vllm_no_ts["standard"]["benchmark_config"].pop("suite_start_ts", None)
+vllm_no_ts["standard"]["benchmark_config"].pop("suite_end_ts", None)
 buf = io.StringIO()
 with redirect_stdout(buf):
-    validate_provenance(vllm_data, sglang_data)
+    validate_provenance(vllm_no_ts, sglang_data)
 out = buf.getvalue()
 if "NOTE: Skipping interval overlap checks for vllm standard" not in out:
     print("ERROR: validate_provenance() failed to print skip notice for baseline without suite_start_ts!", file=sys.stderr)
@@ -261,8 +266,8 @@ from generate_comparison import parse_engine_pins, validate_provenance, load_jso
 
 # Case 1: Prove normalisation of the -cu130 suffix and exact pin parsing on real committed script
 pins = parse_engine_pins("scripts/03_deploy_workloads.sh")
-if pins != {"vllm": "0.25.1", "sglang": "0.5.12"}:
-    print(f"ERROR: Expected pins {{\"vllm\": \"0.25.1\", \"sglang\": \"0.5.12\"}} on real script, got {pins}", file=sys.stderr)
+if pins != {"vllm": "0.26.0", "sglang": "0.5.16"}:
+    print(f"ERROR: Expected pins {{\"vllm\": \"0.26.0\", \"sglang\": \"0.5.16\"}} on real script, got {pins}", file=sys.stderr)
     sys.exit(1)
 print(f"    [OK] Case 1 (Real Script) passed: parse_engine_pins() returned {pins}, proving suffix normalization.")
 
@@ -271,8 +276,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
     real_content = Path("scripts/03_deploy_workloads.sh").read_text(encoding="utf-8")
     tmp_script = Path(tmpdir) / "03_deploy_workloads.sh"
 
-    # Case 2: Pins bumped to v0.26.0 / v0.5.16-cu130 against committed result files -> gate must fail naming both versions
-    bumped_content = real_content.replace("VLLM_IMAGE_TAG=\"v0.25.1\"", "VLLM_IMAGE_TAG=\"v0.26.0\"").replace("SGLANG_IMAGE_TAG=\"v0.5.12-cu130\"", "SGLANG_IMAGE_TAG=\"v0.5.16-cu130\"")
+    # Case 2: Pins bumped to v0.27.0 / v0.5.17-cu130 against committed result files -> gate must fail naming both versions
+    bumped_content = real_content.replace("VLLM_IMAGE_TAG=\"v0.26.0\"", "VLLM_IMAGE_TAG=\"v0.27.0\"").replace("SGLANG_IMAGE_TAG=\"v0.5.16-cu130\"", "SGLANG_IMAGE_TAG=\"v0.5.17-cu130\"")
     tmp_script.write_text(bumped_content, encoding="utf-8")
     
     root = Path("benchmarks/results")
@@ -285,8 +290,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
         sys.exit(1)
     except ValueError as e:
         msg = str(e)
-        if "PROVENANCE GATE FAILURE" not in msg or "0.26.0" not in msg or "0.25.1" not in msg:
-            print(f"ERROR: Expected PROVENANCE GATE FAILURE naming both 0.26.0 and 0.25.1, got: {msg}", file=sys.stderr)
+        if "PROVENANCE GATE FAILURE" not in msg or "0.27.0" not in msg or "0.26.0" not in msg:
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE naming both 0.27.0 and 0.26.0, got: {msg}", file=sys.stderr)
             sys.exit(1)
         print(f"    [OK] Case 2 (Bumped Pins) passed: Caught expected mismatch naming both versions: {msg}")
 
@@ -329,7 +334,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     real_content = Path("scripts/03_deploy_workloads.sh").read_text(encoding="utf-8")
     tmp_script = scripts_dir / "03_deploy_workloads.sh"
 
-    # Case 2: Synthetic injection of IMAGE_TAG="v9.9.9" in vLLM branch while VLLM_IMAGE_TAG stays at v0.25.1 -> must fail
+    # Case 2: Synthetic injection of IMAGE_TAG="v9.9.9" in vLLM branch while VLLM_IMAGE_TAG stays at v0.26.0 -> must fail
     injected_content = real_content.replace("IMAGE_TAG=\"${VLLM_IMAGE_TAG}\"", "IMAGE_TAG=\"v9.9.9\"")
     if injected_content == real_content:
         print("ERROR: Failed to inject v9.9.9 into temporary script!", file=sys.stderr)
@@ -343,8 +348,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
         sys.exit(1)
     except ValueError as e:
         msg = str(e)
-        if "PROVENANCE GATE FAILURE" not in msg or "9.9.9" not in msg or "0.25.1" not in msg:
-            print(f"ERROR: Expected PROVENANCE GATE FAILURE naming both 9.9.9 and 0.25.1, got: {msg}", file=sys.stderr)
+        if "PROVENANCE GATE FAILURE" not in msg or "9.9.9" not in msg or "0.26.0" not in msg:
+            print(f"ERROR: Expected PROVENANCE GATE FAILURE naming both 9.9.9 and 0.26.0, got: {msg}", file=sys.stderr)
             sys.exit(1)
         print(f"    [OK] Case 2 (Injected Tag) passed: Caught expected mismatch naming both versions: {msg}")
 
