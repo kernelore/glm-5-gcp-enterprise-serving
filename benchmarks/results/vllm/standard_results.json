@@ -3,53 +3,56 @@
   "total_requests": 16,
   "total_completed": 16,
   "token_count_source": "usage",
-  "ttft_mean_ms": 625.36,
-  "tpot_mean_ms": 23.09,
-  "throughput_tokens_sec": 285.77,
+  "ttft_mean_ms": 370.9,
+  "tpot_mean_ms": 11.11,
+  "throughput_tokens_sec": 567.54,
   "benchmark_config": {
-    "endpoint": "http://localhost:4000/v1/chat/completions",
+    "endpoint": "http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions",
     "model": "glm-5.2-moe",
     "api_key": "REDACTED",
     "concurrency": 8,
     "requests": 16,
     "max_tokens": 128,
     "temperature": 0.2,
-    "output": "benchmarks/results/vllm/standard_results.json",
-    "metadata": "{\"engine\": \"vllm\", \"engine_version\": \"0.25.1\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.25.1\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\\\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\\\\\\\n    --tensor-parallel-size=8 \\\\\\\\\\\\n    --pipeline-parallel-size=1 \\\\\\\\\\\\n    --served-model-name=glm-5.2-moe \\\\\\\\\\\\n    --port=8000 \\\\\\\\\\\\n    --kv-cache-dtype=auto \\\\\\\\\\\\n    --enable-prefix-caching \\\\\\\\\\\\n    --enable-chunked-prefill \\\\\\\\\\\\n    --max-num-seqs=64 \\\\\\\\\\\\n    --max-num-batched-tokens=8192 \\\\\\\\\\\\n    --max-model-len=131072 \\\\\\\\\\\\n    --gpu-memory-utilization=0.94\\\\n\\\"]\", \"run_timestamp\": \"2026-07-24T16:05:42Z\", \"runs\": 1}"
+    "output": "/results/standard_results.json",
+    "metadata": "{\"engine\": \"vllm\", \"engine_version\": \"0.26.0\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.26.0\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\\\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\\\\\\\n    --tensor-parallel-size=8 \\\\\\\\\\\\n    --pipeline-parallel-size=1 \\\\\\\\\\\\n    --served-model-name=glm-5.2-moe \\\\\\\\\\\\n    --port=8000 \\\\\\\\\\\\n    --kv-cache-dtype=auto \\\\\\\\\\\\n    --enable-prefix-caching \\\\\\\\\\\\n    --enable-chunked-prefill \\\\\\\\\\\\n    --max-num-seqs=64 \\\\\\\\\\\\n    --max-num-batched-tokens=8192 \\\\\\\\\\\\n    --max-model-len=131072 \\\\\\\\\\\\n    --gpu-memory-utilization=0.94\\\\n\\\"]\", \"run_timestamp\": \"2026-07-27T07:41:30Z\", \"runs\": 1}",
+    "suite_start_ts": "2026-07-27T07:41:38Z",
+    "suite_end_ts": "2026-07-27T07:41:41Z",
+    "suite_duration_s": 3.6086
   },
   "execution_summary": {
     "total_requests": 16,
     "successful_requests": 16,
     "failed_requests": 0,
-    "total_benchmark_time_seconds": 7.167,
+    "total_benchmark_time_seconds": 3.609,
     "token_count_source": "usage"
   },
   "metrics": {
     "total_tokens_generated": 2048,
-    "cluster_throughput_tokens_per_sec": 285.77,
+    "cluster_throughput_tokens_per_sec": 567.54,
     "ttft_ms": {
-      "mean": 625.36,
-      "p50": 794.73,
-      "p90": 804.82,
-      "p99": 805.62,
-      "min": 332.41,
-      "max": 805.62
+      "mean": 370.9,
+      "p50": 438.72,
+      "p90": 596.21,
+      "p99": 612.56,
+      "min": 91.03,
+      "max": 612.56
     },
     "tpot_ms": {
-      "mean": 23.09,
-      "p50": 22.89,
-      "p90": 24.47,
-      "p99": 24.48,
-      "min": 22.38,
-      "max": 24.48
+      "mean": 11.11,
+      "p50": 11.6,
+      "p90": 12.27,
+      "p99": 13.64,
+      "min": 9.81,
+      "max": 13.64
     }
   },
   "metadata": {
     "engine": "vllm",
-    "engine_version": "0.25.1",
-    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.25.1",
+    "engine_version": "0.26.0",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.26.0",
     "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\n    --tensor-parallel-size=8 \\\\\\n    --pipeline-parallel-size=1 \\\\\\n    --served-model-name=glm-5.2-moe \\\\\\n    --port=8000 \\\\\\n    --kv-cache-dtype=auto \\\\\\n    --enable-prefix-caching \\\\\\n    --enable-chunked-prefill \\\\\\n    --max-num-seqs=64 \\\\\\n    --max-num-batched-tokens=8192 \\\\\\n    --max-model-len=131072 \\\\\\n    --gpu-memory-utilization=0.94\\n\"]",
-    "run_timestamp": "2026-07-24T16:05:42Z",
+    "run_timestamp": "2026-07-27T07:41:30Z",
     "runs": 1
   }
 }

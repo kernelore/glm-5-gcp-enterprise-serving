@@ -1,11 +1,20 @@
 {
   "metadata": {
     "engine": "vllm",
-    "engine_version": "0.25.1",
-    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.25.1",
+    "engine_version": "0.26.0",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.26.0",
     "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\n    --tensor-parallel-size=8 \\\\\\n    --pipeline-parallel-size=1 \\\\\\n    --served-model-name=glm-5.2-moe \\\\\\n    --port=8000 \\\\\\n    --kv-cache-dtype=auto \\\\\\n    --enable-prefix-caching \\\\\\n    --enable-chunked-prefill \\\\\\n    --max-num-seqs=64 \\\\\\n    --max-num-batched-tokens=8192 \\\\\\n    --max-model-len=131072 \\\\\\n    --gpu-memory-utilization=0.94\\n\"]",
-    "run_timestamp": "2026-07-24T20:13:05Z",
+    "run_timestamp": "2026-07-27T07:41:30Z",
     "runs": 1
+  },
+  "sweep_config": {
+    "endpoint": "http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions",
+    "model": "glm-5.2-moe",
+    "output": "/results/saturation_results.json",
+    "metadata": "{\"engine\": \"vllm\", \"engine_version\": \"0.26.0\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.26.0\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\\\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\\\\\\\n    --tensor-parallel-size=8 \\\\\\\\\\\\n    --pipeline-parallel-size=1 \\\\\\\\\\\\n    --served-model-name=glm-5.2-moe \\\\\\\\\\\\n    --port=8000 \\\\\\\\\\\\n    --kv-cache-dtype=auto \\\\\\\\\\\\n    --enable-prefix-caching \\\\\\\\\\\\n    --enable-chunked-prefill \\\\\\\\\\\\n    --max-num-seqs=64 \\\\\\\\\\\\n    --max-num-batched-tokens=8192 \\\\\\\\\\\\n    --max-model-len=131072 \\\\\\\\\\\\n    --gpu-memory-utilization=0.94\\\\n\\\"]\", \"run_timestamp\": \"2026-07-27T07:41:30Z\", \"runs\": 1}",
+    "suite_start_ts": "2026-07-27T07:51:50Z",
+    "suite_end_ts": "2026-07-27T07:55:01Z",
+    "suite_duration_s": 191.4655
   },
   "sweep_results": [
     {
@@ -15,21 +24,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 8192,
-      "total_duration_sec": 77.2431116104126,
-      "aggregate_tok_s": 106.0547643564335,
-      "per_gpu_tok_s": 13.256845544554187,
-      "per_user_tok_s": 106.0547643564335,
+      "total_duration_sec": 67.18784523010254,
+      "aggregate_tok_s": 121.926815362873,
+      "per_gpu_tok_s": 15.240851920359125,
+      "per_user_tok_s": 121.926815362873,
       "ttft_ms": {
-        "mean": 302.61996388435364,
-        "p50": 300.7826805114746,
-        "p90": 310.4567527770996,
-        "p99": 310.4567527770996
+        "mean": 174.7269332408905,
+        "p50": 175.55975914001465,
+        "p90": 187.32285499572754,
+        "p99": 187.32285499572754
       },
       "tpot_ms": {
-        "mean": 9.189114261941613,
-        "p50": 9.143352508544922,
-        "p90": 9.824752807617188,
-        "p99": 18.02992820739746
+        "mean": 8.105875045813974,
+        "p50": 8.043050765991211,
+        "p90": 8.176088333129883,
+        "p99": 8.435249328613281
       }
     },
     {
@@ -39,21 +48,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 16384,
-      "total_duration_sec": 25.533173084259033,
-      "aggregate_tok_s": 641.6750454764506,
-      "per_gpu_tok_s": 80.20938068455632,
-      "per_user_tok_s": 80.20938068455632,
+      "total_duration_sec": 21.283546209335327,
+      "aggregate_tok_s": 769.7965291523504,
+      "per_gpu_tok_s": 96.2245661440438,
+      "per_user_tok_s": 96.2245661440438,
       "ttft_ms": {
-        "mean": 577.8686553239822,
-        "p50": 535.9301567077637,
-        "p90": 691.617488861084,
-        "p99": 693.8304901123047
+        "mean": 309.7105622291565,
+        "p50": 350.13270378112793,
+        "p90": 367.2502040863037,
+        "p99": 367.5870895385742
       },
       "tpot_ms": {
-        "mean": 11.93006324009097,
-        "p50": 11.861085891723633,
-        "p90": 13.245105743408203,
-        "p99": 22.552013397216797
+        "mean": 10.109353663725836,
+        "p50": 10.049581527709961,
+        "p90": 10.968685150146484,
+        "p99": 11.716604232788086
       }
     },
     {
@@ -63,21 +72,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 32768,
-      "total_duration_sec": 29.112574338912964,
-      "aggregate_tok_s": 1125.5617458810937,
-      "per_gpu_tok_s": 140.6952182351367,
-      "per_user_tok_s": 70.34760911756835,
+      "total_duration_sec": 24.847505807876587,
+      "aggregate_tok_s": 1318.7641549765788,
+      "per_gpu_tok_s": 164.84551937207235,
+      "per_user_tok_s": 82.42275968603617,
       "ttft_ms": {
-        "mean": 747.5120946764946,
-        "p50": 760.9820365905762,
-        "p90": 803.9474487304688,
-        "p99": 808.0742359161377
+        "mean": 634.4132348895073,
+        "p50": 569.0791606903076,
+        "p90": 769.3688869476318,
+        "p99": 776.9589424133301
       },
       "tpot_ms": {
-        "mean": 13.513208785945809,
-        "p50": 13.439655303955078,
-        "p90": 15.53654670715332,
-        "p99": 19.382476806640625
+        "mean": 11.54395151456762,
+        "p50": 11.496782302856445,
+        "p90": 12.911558151245117,
+        "p99": 14.040231704711914
       }
     },
     {
@@ -87,21 +96,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 65536,
-      "total_duration_sec": 43.19350790977478,
-      "aggregate_tok_s": 1517.2650514261443,
-      "per_gpu_tok_s": 189.65813142826804,
-      "per_user_tok_s": 47.41453285706701,
+      "total_duration_sec": 29.887813329696655,
+      "aggregate_tok_s": 2192.7331811485574,
+      "per_gpu_tok_s": 274.0916476435697,
+      "per_user_tok_s": 68.52291191089242,
       "ttft_ms": {
-        "mean": 1055.87774887681,
-        "p50": 1124.0019798278809,
-        "p90": 1289.090871810913,
-        "p99": 1304.232120513916
+        "mean": 759.6819438040257,
+        "p50": 779.242753982544,
+        "p90": 983.9551448822021,
+        "p99": 988.4865283966064
       },
       "tpot_ms": {
-        "mean": 20.106036971508612,
-        "p50": 19.896507263183594,
-        "p90": 23.49400520324707,
-        "p99": 30.92336654663086
+        "mean": 13.881487122610347,
+        "p50": 13.639211654663086,
+        "p90": 16.242027282714844,
+        "p99": 18.15938949584961
       }
     },
     {
@@ -111,21 +120,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 131072,
-      "total_duration_sec": 60.086644887924194,
-      "aggregate_tok_s": 2181.383238230064,
-      "per_gpu_tok_s": 272.672904778758,
-      "per_user_tok_s": 34.08411309734475,
+      "total_duration_sec": 37.983797550201416,
+      "aggregate_tok_s": 3450.7344829533763,
+      "per_gpu_tok_s": 431.34181036917204,
+      "per_user_tok_s": 53.917726296146505,
       "ttft_ms": {
-        "mean": 1547.4669951945543,
-        "p50": 1613.9752864837646,
-        "p90": 2123.73423576355,
-        "p99": 2302.0734786987305
+        "mean": 1043.5814149677753,
+        "p50": 1019.0579891204834,
+        "p90": 1584.369421005249,
+        "p99": 1794.032096862793
       },
       "tpot_ms": {
-        "mean": 27.885489714369317,
-        "p50": 27.17757225036621,
-        "p90": 34.23643112182617,
-        "p99": 59.74173545837402
+        "mean": 17.547249032816353,
+        "p50": 16.865253448486328,
+        "p90": 21.58331871032715,
+        "p99": 25.339603424072266
       }
     }
   ]
