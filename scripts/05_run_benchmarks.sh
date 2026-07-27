@@ -218,6 +218,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     --from-file="${PROJECT_ROOT}/benchmarks/soak_benchmark_glm52.py" \
     --from-file="${PROJECT_ROOT}/benchmarks/run_saturation_sweep.py" \
     --from-file="${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" \
+    --from-file="${PROJECT_ROOT}/benchmarks/telemetry_sanitizer.py" \
     --from-file="${PROJECT_ROOT}/benchmarks/scratch/metadata.json" \
     -n llm-serving --dry-run=client -o yaml | \
     # --validate=false bypasses client-side OpenAPI schema validation errors where embedded Python/JSON script strings in ConfigMaps are misparsed as Kubernetes resource fields.
