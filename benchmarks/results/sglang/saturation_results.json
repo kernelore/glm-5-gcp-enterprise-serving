@@ -1,11 +1,20 @@
 {
   "metadata": {
     "engine": "sglang",
-    "engine_version": "0.5.12",
-    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.12-cu130",
+    "engine_version": "0.5.16",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.16-cu130",
     "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m sglang.launch_server \\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\n    --served-model-name glm-5.2-moe \\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\n    --tp-size 8 \\\\\\n    --context-length 131072 \\\\\\n    --max-running-requests 64 \\\\\\n    --chunked-prefill-size 8192 \\\\\\n    --mem-fraction-static 0.90 \\\\\\n    --kv-cache-dtype auto \\\\\\n    --quantization modelopt_fp4 \\\\\\n    --disable-shared-experts-fusion \\\\\\n    --reasoning-parser glm45 \\\\\\n    --tool-call-parser glm47 \\\\\\n    --enable-metrics\\n\"]",
-    "run_timestamp": "2026-07-24T20:59:02Z",
+    "run_timestamp": "2026-07-27T08:06:04Z",
     "runs": 1
+  },
+  "sweep_config": {
+    "endpoint": "http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions",
+    "model": "glm-5.2-moe",
+    "output": "/results/saturation_results.json",
+    "metadata": "{\"engine\": \"sglang\", \"engine_version\": \"0.5.16\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.16-cu130\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m sglang.launch_server \\\\\\\\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\\\\\\\n    --served-model-name glm-5.2-moe \\\\\\\\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\\\\\\\n    --tp-size 8 \\\\\\\\\\\\n    --context-length 131072 \\\\\\\\\\\\n    --max-running-requests 64 \\\\\\\\\\\\n    --chunked-prefill-size 8192 \\\\\\\\\\\\n    --mem-fraction-static 0.90 \\\\\\\\\\\\n    --kv-cache-dtype auto \\\\\\\\\\\\n    --quantization modelopt_fp4 \\\\\\\\\\\\n    --disable-shared-experts-fusion \\\\\\\\\\\\n    --reasoning-parser glm45 \\\\\\\\\\\\n    --tool-call-parser glm47 \\\\\\\\\\\\n    --enable-metrics\\\\n\\\"]\", \"run_timestamp\": \"2026-07-27T08:06:04Z\", \"runs\": 1}",
+    "suite_start_ts": "2026-07-27T08:16:36Z",
+    "suite_end_ts": "2026-07-27T08:19:32Z",
+    "suite_duration_s": 176.0461
   },
   "sweep_results": [
     {
@@ -15,21 +24,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 8192,
-      "total_duration_sec": 76.27078676223755,
-      "aggregate_tok_s": 107.40678505831204,
-      "per_gpu_tok_s": 13.425848132289005,
-      "per_user_tok_s": 107.40678505831204,
+      "total_duration_sec": 54.67192339897156,
+      "aggregate_tok_s": 149.8392500336672,
+      "per_gpu_tok_s": 18.7299062542084,
+      "per_user_tok_s": 149.8392500336672,
       "ttft_ms": {
-        "mean": 1022.2579836845398,
-        "p50": 264.9857997894287,
-        "p90": 6319.079160690308,
-        "p99": 6319.079160690308
+        "mean": 228.4967601299286,
+        "p50": 229.63643074035645,
+        "p90": 239.1672134399414,
+        "p99": 239.1672134399414
       },
       "tpot_ms": {
-        "mean": 8.360303503779248,
-        "p50": 8.318424224853516,
-        "p90": 8.93092155456543,
-        "p99": 17.09723472595215
+        "mean": 6.481019156720851,
+        "p50": 6.460905075073242,
+        "p90": 6.585836410522461,
+        "p99": 6.762981414794922
       }
     },
     {
@@ -39,21 +48,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 16384,
-      "total_duration_sec": 22.077913522720337,
-      "aggregate_tok_s": 742.0991110930504,
-      "per_gpu_tok_s": 92.7623888866313,
-      "per_user_tok_s": 92.7623888866313,
+      "total_duration_sec": 18.77099347114563,
+      "aggregate_tok_s": 872.8360608715321,
+      "per_gpu_tok_s": 109.10450760894152,
+      "per_user_tok_s": 109.10450760894152,
       "ttft_ms": {
-        "mean": 544.6600168943405,
-        "p50": 646.5423107147217,
-        "p90": 653.1975269317627,
-        "p99": 655.0281047821045
+        "mean": 392.4982398748398,
+        "p50": 396.1472511291504,
+        "p90": 400.6035327911377,
+        "p99": 400.754451751709
       },
       "tpot_ms": {
-        "mean": 10.280477000717351,
-        "p50": 10.158061981201172,
-        "p90": 11.635541915893555,
-        "p99": 28.032541275024414
+        "mean": 8.840474716501756,
+        "p50": 8.792638778686523,
+        "p90": 9.543180465698242,
+        "p99": 10.411977767944336
       }
     },
     {
@@ -63,21 +72,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 32768,
-      "total_duration_sec": 25.74161720275879,
-      "aggregate_tok_s": 1272.9580951304092,
-      "per_gpu_tok_s": 159.11976189130115,
-      "per_user_tok_s": 79.55988094565058,
+      "total_duration_sec": 22.65542244911194,
+      "aggregate_tok_s": 1446.3645546050923,
+      "per_gpu_tok_s": 180.79556932563654,
+      "per_user_tok_s": 90.39778466281827,
       "ttft_ms": {
-        "mean": 712.2691124677658,
-        "p50": 836.3451957702637,
-        "p90": 848.7756252288818,
-        "p99": 853.3275127410889
+        "mean": 711.7826193571091,
+        "p50": 873.366117477417,
+        "p90": 879.5571327209473,
+        "p99": 881.2041282653809
       },
       "tpot_ms": {
-        "mean": 12.027868739106356,
-        "p50": 11.760473251342773,
-        "p90": 14.147043228149414,
-        "p99": 28.437137603759766
+        "mean": 10.382642088335711,
+        "p50": 10.3759765625,
+        "p90": 11.84225082397461,
+        "p99": 13.039350509643555
       }
     },
     {
@@ -87,21 +96,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 65536,
-      "total_duration_sec": 31.123804569244385,
-      "aggregate_tok_s": 2105.6551699582615,
-      "per_gpu_tok_s": 263.2068962447827,
-      "per_user_tok_s": 65.80172406119567,
+      "total_duration_sec": 27.65176510810852,
+      "aggregate_tok_s": 2370.0476169885596,
+      "per_gpu_tok_s": 296.25595212356995,
+      "per_user_tok_s": 74.06398803089249,
       "ttft_ms": {
-        "mean": 994.9553646147251,
-        "p50": 1025.238275527954,
-        "p90": 1054.584264755249,
-        "p99": 1062.9899501800537
+        "mean": 989.4440174102783,
+        "p50": 1061.391830444336,
+        "p90": 1078.1104564666748,
+        "p99": 1082.3602676391602
       },
       "tpot_ms": {
-        "mean": 14.248539465709095,
-        "p50": 14.039754867553711,
-        "p90": 17.8067684173584,
-        "p99": 27.70686149597168
+        "mean": 12.583465751225129,
+        "p50": 12.521982192993164,
+        "p90": 14.946699142456055,
+        "p99": 17.022132873535156
       }
     },
     {
@@ -111,21 +120,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 131072,
-      "total_duration_sec": 50.017531394958496,
-      "aggregate_tok_s": 2620.521172166673,
-      "per_gpu_tok_s": 327.5651465208341,
-      "per_user_tok_s": 40.94564331510426,
+      "total_duration_sec": 41.96681785583496,
+      "aggregate_tok_s": 3123.229415445805,
+      "per_gpu_tok_s": 390.4036769307256,
+      "per_user_tok_s": 48.8004596163407,
       "ttft_ms": {
-        "mean": 2286.783814430237,
-        "p50": 2019.6316242218018,
-        "p90": 2154.6568870544434,
-        "p99": 20514.939546585083
+        "mean": 1864.8272268474102,
+        "p50": 1723.1895923614502,
+        "p90": 1760.960340499878,
+        "p99": 17427.510261535645
       },
       "tpot_ms": {
-        "mean": 17.952840005102665,
-        "p50": 17.789125442504883,
-        "p90": 24.944067001342773,
-        "p99": 40.465354919433594
+        "mean": 15.280554517686625,
+        "p50": 15.273332595825195,
+        "p90": 19.40441131591797,
+        "p99": 22.97520637512207
       }
     }
   ]
