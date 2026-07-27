@@ -126,44 +126,44 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 * **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets and radix cache flushing to ensure 0% prefix-cache hits (measuring true cold decoding and prefill throughput).
 * **Sequential Execution & Drain Protocol:** To prevent resource contention and queue contamination, benchmark suites were executed strictly sequentially with full queue drain intervals between runs.
 * **Engine Provenance Verification:** Engine identity and container provenance were verified prior to every suite by inspecting `/metrics` endpoints (`^vllm:` vs `^sglang:`) and deployment container images. Collection timestamps recorded in suite metadata:
-  * **vLLM** (`vllm-blackwell:v0.25.1`): Standard (2026-07-24T16:05:42Z), Massive (2026-07-24T20:12:03Z), Soak (2026-07-24T16:10:46Z), Saturation (2026-07-24T20:13:05Z), Prefill (2026-07-24T16:14:05Z).
-  * **SGLang** (`sglang-blackwell:v0.5.12-cu130`): Standard (2026-07-24T16:57:26Z), Massive (2026-07-24T17:11:02Z), Soak (2026-07-24T15:11:52Z), Saturation (2026-07-24T20:59:02Z), Prefill (2026-07-24T15:11:07Z).
+  * **vLLM** (`vllm-blackwell:v0.26.0`): Standard (2026-07-27T07:41:30Z), Massive (2026-07-27T07:41:30Z), Soak (2026-07-27T07:41:30Z), Saturation (2026-07-27T07:41:30Z), Prefill (2026-07-27T07:41:30Z).
+  * **SGLang** (`sglang-blackwell:v0.5.16-cu130`): Standard (2026-07-27T08:06:04Z), Massive (2026-07-27T08:06:04Z), Soak (2026-07-27T08:06:04Z), Saturation (2026-07-27T08:06:04Z), Prefill (2026-07-27T08:06:04Z).
 
 #### Table 1: Production Workload Suite Summary (Gateway Port 4000)
-| Workload Suite | Metric | vLLM (0.25.1) | SGLang (0.5.12) | Delta ($\Delta$) |
+| Workload Suite | Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- | :--- |
-| Standard Suite ($c=8$, $128\text{ tok}$) | TTFT P50 (ms) | 794.73 | 547.99 | **+31.05%** |
-|  | TPOT mean (ms) | 23.09 | 10.17 | **+55.95%** |
-|  | Throughput (tok/s) | 285.77 | 556.08 | **+94.59%** |
+| Standard Suite ($c=8$, $128\text{ tok}$) | TTFT P50 (ms) | 438.72 | 638.29 | **-45.49%** |
+|  | TPOT mean (ms) | 11.11 | 8.70 | **+21.69%** |
+|  | Throughput (tok/s) | 567.54 | 600.17 | **+5.75%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Massive Stress ($c=20$, $256\text{ tok}$) | TTFT P50 (ms) | 722.94 | 775.13 | **-7.22%** |
-|  | TPOT mean (ms) | 19.19 | 14.41 | **+24.91%** |
-|  | Throughput (tok/s) | 825.03 | 904.72 | **+9.66%** |
+| Massive Stress ($c=20$, $256\text{ tok}$) | TTFT P50 (ms) | 321.80 | 6568.61 | **-1941.21%** |
+|  | TPOT mean (ms) | 10.13 | 8.84 | **+12.73%** |
+|  | Throughput (tok/s) | 708.46 | 335.62 | **-52.63%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Endurance Soak ($c=18$, $1800\text{s}$) | TTFT P50 (ms) | 132.99 | 301.74 | **-126.89%** |
-|  | TPOT mean (ms) | 24.66 | 15.57 | **+36.86%** |
-|  | Throughput (tok/s) | 877.20 | 1074.28 | **+22.47%** |
-|  | Completed cycles | 6183 | 7565 | **+22.35%** |
+| Endurance Soak ($c=18$, $1800\text{s}$) | TTFT P50 (ms) | 173.45 | 392.10 | **-126.06%** |
+|  | TPOT mean (ms) | 10.66 | 10.87 | **-1.97%** |
+|  | Throughput (tok/s) | 692.79 | 648.15 | **-6.44%** |
+|  | Completed cycles | 1630 | 1525 | **-6.44%** |
 
 #### Table 2: Concurrency Saturation Sweep (Direct Port 8000, 0% Cache Hits)
-| Concurrency ($c$) | vLLM (0.25.1) tok/s | SGLang (0.5.12) tok/s | Throughput $\Delta$ | vLLM (0.25.1) TTFT P99 (s) | SGLang (0.5.12) TTFT P99 (s) | TTFT P99 $\Delta$ |
+| Concurrency ($c$) | vLLM (0.26.0) tok/s | SGLang (0.5.16) tok/s | Throughput $\Delta$ | vLLM (0.26.0) TTFT P99 (s) | SGLang (0.5.16) TTFT P99 (s) | TTFT P99 $\Delta$ |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| $c=1$ | 106.05 | 107.41 | **+1.27%** | 0.3105 s | 6.3191 s | **-1935.41%** |
-| $c=8$ | 641.68 | 742.10 | **+15.65%** | 0.6938 s | 0.6550 s | **+5.59%** |
-| $c=16$ | 1125.56 | 1272.96 | **+13.10%** | 0.8081 s | 0.8533 s | **-5.60%** |
-| $c=32$ | 1517.27 | 2105.66 | **+38.78%** | 1.3042 s | 1.0630 s | **+18.50%** |
-| $c=64$ | 2181.38 | 2620.52 | **+20.13%** | 2.3021 s | 20.5149 s | **-791.15%** |
+| $c=1$ | 121.93 | 149.84 | **+22.89%** | 0.1873 s | 0.2392 s | **-27.68%** |
+| $c=8$ | 769.80 | 872.84 | **+13.39%** | 0.3676 s | 0.4008 s | **-9.02%** |
+| $c=16$ | 1318.76 | 1446.36 | **+9.68%** | 0.7770 s | 0.8812 s | **-13.42%** |
+| $c=32$ | 2192.73 | 2370.05 | **+8.09%** | 0.9885 s | 1.0824 s | **-9.50%** |
+| $c=64$ | 3450.73 | 3123.23 | **-9.49%** | 1.7940 s | 17.4275 s | **-871.42%** |
 
 #### Table 3: Prompt Prefill Ingestion Stress ($8,192\text{ prompt tok} \to 16\text{ out}$)
-| Metric | vLLM (0.25.1) | SGLang (0.5.12) | Delta ($\Delta$) |
+| Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- |
-| Prefill throughput | 25846.71 prompt tok/s | 1526.35 prompt tok/s | **-94.09%** |
-| TTFT mean (ms) | 205.56 ms | 3480.85 ms | **-1593.37%** |
+| Prefill throughput | 105825.12 prompt tok/s | 1797.26 prompt tok/s | **-98.30%** |
+| TTFT mean (ms) | 50.21 ms | 2956.16 ms | **-5788.12%** |
 
 #### Technical Guidance: When to Choose vLLM vs SGLang
 
-* **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 10.17 ms vs vLLM 23.09 ms) and sustained stability during 30-minute endurance soak testing.
-* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. vLLM demonstrated superior prompt ingestion throughput (25846.71 prompt tok/s vs SGLang 1526.35 prompt tok/s), making it preferable for raw long-context batch prefill without cache hits. vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.
+* **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 8.70 ms vs vLLM 11.11 ms) and sustained stability during 30-minute endurance soak testing.
+* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. vLLM demonstrated superior prompt ingestion throughput (105825.12 prompt tok/s vs SGLang 1797.26 prompt tok/s), making it preferable for raw long-context batch prefill without cache hits. vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.
 
 <!-- ENGINE_COMPARISON_END -->
 
