@@ -1,55 +1,58 @@
 {
-  "successful_requests": 7565,
-  "total_requests": 7565,
-  "total_completed": 7565,
+  "successful_requests": 1525,
+  "total_requests": 1525,
+  "total_completed": 1525,
   "token_count_source": "usage",
-  "ttft_mean_ms": 315.69,
-  "tpot_mean_ms": 15.57,
-  "throughput_tokens_sec": 1074.28,
+  "ttft_mean_ms": 384.86,
+  "tpot_mean_ms": 10.87,
+  "throughput_tokens_sec": 648.15,
   "soak_config": {
     "endpoint": "http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions",
     "model": "glm-5.2-moe",
     "api_key": "REDACTED",
-    "concurrency": 18,
-    "duration": 1800,
+    "concurrency": 8,
+    "duration": 600,
     "max_tokens": 256,
     "temperature": 0.3,
-    "output": "benchmarks/results/sglang/soak_results.json",
-    "metadata": "{\"engine\": \"sglang\", \"engine_version\": \"0.5.12\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.12-cu130\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m sglang.launch_server \\\\\\\\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\\\\\\\n    --served-model-name glm-5.2-moe \\\\\\\\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\\\\\\\n    --tp-size 8 \\\\\\\\\\\\n    --context-length 131072 \\\\\\\\\\\\n    --max-running-requests 64 \\\\\\\\\\\\n    --chunked-prefill-size 8192 \\\\\\\\\\\\n    --mem-fraction-static 0.90 \\\\\\\\\\\\n    --kv-cache-dtype auto \\\\\\\\\\\\n    --quantization modelopt_fp4 \\\\\\\\\\\\n    --disable-shared-experts-fusion \\\\\\\\\\\\n    --reasoning-parser glm45 \\\\\\\\\\\\n    --tool-call-parser glm47 \\\\\\\\\\\\n    --enable-metrics\\\\n\\\"]\", \"run_timestamp\": \"2026-07-24T15:11:52Z\", \"runs\": 1}"
+    "output": "/results/soak_results.json",
+    "metadata": "{\"engine\": \"sglang\", \"engine_version\": \"0.5.16\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.16-cu130\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m sglang.launch_server \\\\\\\\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\\\\\\\n    --served-model-name glm-5.2-moe \\\\\\\\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\\\\\\\n    --tp-size 8 \\\\\\\\\\\\n    --context-length 131072 \\\\\\\\\\\\n    --max-running-requests 64 \\\\\\\\\\\\n    --chunked-prefill-size 8192 \\\\\\\\\\\\n    --mem-fraction-static 0.90 \\\\\\\\\\\\n    --kv-cache-dtype auto \\\\\\\\\\\\n    --quantization modelopt_fp4 \\\\\\\\\\\\n    --disable-shared-experts-fusion \\\\\\\\\\\\n    --reasoning-parser glm45 \\\\\\\\\\\\n    --tool-call-parser glm47 \\\\\\\\\\\\n    --enable-metrics\\\\n\\\"]\", \"run_timestamp\": \"2026-07-27T08:06:04Z\", \"runs\": 1}",
+    "suite_start_ts": "2026-07-27T08:06:33Z",
+    "suite_end_ts": "2026-07-27T08:16:36Z",
+    "suite_duration_s": 602.3267
   },
   "execution_summary": {
-    "total_duration_seconds": 1802.726,
-    "total_requests_completed": 7565,
+    "total_duration_seconds": 602.327,
+    "total_requests_completed": 1525,
     "total_requests_failed": 0,
     "success_rate_percent": 100.0,
     "token_count_source": "usage"
   },
   "metrics": {
-    "total_output_tokens": 1936640,
-    "sustained_cluster_tps": 1074.28,
+    "total_output_tokens": 390400,
+    "sustained_cluster_tps": 648.15,
     "ttft_ms": {
-      "mean": 315.69,
-      "p50": 301.74,
-      "p90": 389.71,
-      "p99": 977.08,
-      "min": 156.75,
-      "max": 3091.82
+      "mean": 384.86,
+      "p50": 392.1,
+      "p90": 424.3,
+      "p99": 1001.09,
+      "min": 207.99,
+      "max": 1799.9
     },
     "tpot_ms": {
-      "mean": 15.57,
-      "p50": 15.39,
-      "p90": 16.85,
-      "p99": 22.24,
-      "min": 4.2,
-      "max": 25.64
+      "mean": 10.87,
+      "p50": 10.88,
+      "p90": 11.66,
+      "p99": 15.38,
+      "min": 6.89,
+      "max": 19.36
     }
   },
   "metadata": {
     "engine": "sglang",
-    "engine_version": "0.5.12",
-    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.12-cu130",
+    "engine_version": "0.5.16",
+    "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.16-cu130",
     "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m sglang.launch_server \\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\n    --served-model-name glm-5.2-moe \\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\n    --tp-size 8 \\\\\\n    --context-length 131072 \\\\\\n    --max-running-requests 64 \\\\\\n    --chunked-prefill-size 8192 \\\\\\n    --mem-fraction-static 0.90 \\\\\\n    --kv-cache-dtype auto \\\\\\n    --quantization modelopt_fp4 \\\\\\n    --disable-shared-experts-fusion \\\\\\n    --reasoning-parser glm45 \\\\\\n    --tool-call-parser glm47 \\\\\\n    --enable-metrics\\n\"]",
-    "run_timestamp": "2026-07-24T15:11:52Z",
+    "run_timestamp": "2026-07-27T08:06:04Z",
     "runs": 1
   }
 }
