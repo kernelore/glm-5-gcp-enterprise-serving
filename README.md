@@ -123,11 +123,11 @@ To switch engines on a live cluster:
 All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (8x NVIDIA B200 HGX, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, tensor parallelism TP=8) and identical model weights (`nvidia/GLM-5.2-NVFP4`) mounted read-only from a shared Hyperdisk ML ROX volume. Both engines served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).
 
 #### Methodology & Provenance Protocol
-* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000, utilizing unique prompt sets (measuring cold decoding and prefill throughput).
+* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000 (measuring cold decoding and prefill throughput). Earlier published prefill figures were contaminated by first-request initialization (JIT/CUDA-graph capture); current figures measure cold prefill after warmup on a restarted engine, with `warmup_requests: 2` recorded in the benchmark metadata.
 * **Sequential Execution & Drain Protocol:** To prevent resource contention and queue contamination, benchmark suites were executed strictly sequentially with full queue drain intervals between runs.
 * **Engine Provenance Verification:** Engine identity and container provenance were verified prior to every suite by inspecting `/metrics` endpoints (`^vllm:` vs `^sglang:`) and deployment container images. Collection timestamps recorded in suite metadata:
-  * **vLLM** (`vllm-blackwell:v0.26.0`): Standard (2026-07-27T07:41:30Z), Massive (2026-07-27T07:41:30Z), Soak (2026-07-27T07:41:30Z), Saturation (2026-07-27T07:41:30Z), Prefill (2026-07-27T07:41:30Z).
-  * **SGLang** (`sglang-blackwell:v0.5.16-cu130`): Standard (2026-07-27T08:06:04Z), Massive (2026-07-27T08:06:04Z), Soak (2026-07-27T08:06:04Z), Saturation (2026-07-27T08:06:04Z), Prefill (2026-07-27T08:06:04Z).
+  * **vLLM** (`vllm-blackwell:v0.26.0`): Standard (2026-07-27T07:41:30Z), Massive (2026-07-27T07:41:30Z), Soak (2026-07-27T07:41:30Z), Saturation (2026-07-27T07:41:30Z), Prefill (2026-07-27T15:23:59Z).
+  * **SGLang** (`sglang-blackwell:v0.5.16-cu130`): Standard (2026-07-27T08:06:04Z), Massive (2026-07-27T08:06:04Z), Soak (2026-07-27T08:06:04Z), Saturation (2026-07-27T08:06:04Z), Prefill (2026-07-27T14:51:57Z).
 
 #### Table 1: Production Workload Suite Summary (Gateway Port 4000)
 | Workload Suite | Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
@@ -157,13 +157,14 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 #### Table 3: Prompt Prefill Ingestion Stress ($5,313\text{ prompt tok} \to 16\text{ out}$)
 | Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- |
-| Prefill throughput | 105825.12 prompt tok/s | 1797.26 prompt tok/s | **-98.30%** |
-| TTFT mean (ms) | 50.21 ms | 2956.16 ms | **-5788.12%** |
+| Prefill throughput | 23458.93 prompt tok/s | 23890.26 prompt tok/s | **+1.84%** |
+| TTFT mean (ms) | 226.48 ms | 222.39 ms | **+1.81%** |
 
 #### Technical Guidance: When to Choose vLLM vs SGLang
 
+* **Both engines are production-viable on this stack; differences across prefill ingestion and serving suites are within operational noise.**
 * **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 8.70 ms vs vLLM 11.11 ms) and sustained stability during 30-minute endurance soak testing.
-* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving and high-throughput batch inference. vLLM demonstrated superior prompt ingestion throughput (105825.12 prompt tok/s vs SGLang 1797.26 prompt tok/s), making it preferable for raw long-context batch prefill. vLLM maintains mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes.
+* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving where mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes are prioritized.
 
 <!-- ENGINE_COMPARISON_END -->
 
