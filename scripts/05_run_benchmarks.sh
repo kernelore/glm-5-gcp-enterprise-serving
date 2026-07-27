@@ -256,7 +256,18 @@ if [ "${IN_CLUSTER}" = "true" ]; then
     unset BENCHMARK_DURATION || true
   fi
   export BENCHMARK_METADATA="${METADATA_JSON}"
-  envsubst < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
+  python3 -c '
+import os, sys, re
+content = sys.stdin.read()
+allowed = {"BENCHMARK_MODE", "BENCHMARK_CONCURRENCY", "BENCHMARK_DURATION", "BENCHMARK_REQUESTS", "BENCHMARK_METADATA", "ENV_LABEL", "GATEWAY_MASTER_KEY", "OWNER_LABEL", "INFERENCE_SERVER_LABEL", "VLLM_VIP", "SERVING_VIP", "PROJECT_ID", "REGION", "ZONE", "CLUSTER_NAME"}
+def replace_var(match):
+    var_name = match.group(1) or match.group(2)
+    if var_name in allowed:
+        return os.environ.get(var_name, "")
+    return match.group(0)
+output = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", replace_var, content)
+sys.stdout.write(output)
+' < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
 
   echo "    Applying in-cluster benchmark Job (${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml)..."
   kubectl delete job glm52-incluster-benchmark -n llm-serving --ignore-not-found=true

@@ -41,7 +41,7 @@ data:
           exit 1
         fi
         local metrics_payload
-        if ! metrics_payload=$(curl -s --connect-timeout 3 --max-time 5 "${metrics_url}"); then
+        if ! metrics_payload=$(python3 -c "import urllib.request; print(urllib.request.urlopen('${metrics_url}', timeout=5).read().decode('utf-8', 'ignore'))" 2>/dev/null); then
           echo "    [CHECK] Failed to reach ${metrics_url}. Resetting consecutive zero check count."
           zero_count=0
         else

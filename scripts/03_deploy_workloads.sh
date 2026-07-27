@@ -265,7 +265,7 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
             echo "    Bucket ${BUCKET_ROOT} already exists."
           fi
           kubectl delete pod glm52-cache-seeder -n llm-serving --ignore-not-found=true >/dev/null 2>&1
-          if ! kubectl run glm52-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"glm52-workload-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-glm52-weights-staging"}}]}}'; then
+          if ! kubectl run glm52-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"glm52-vllm-sa","nodeSelector":{"cloud.google.com/gke-accelerator":"nvidia-b200","cloud.google.com/gke-spot":"true"},"tolerations":[{"key":"nvidia.com/gpu","operator":"Exists","effect":"NoSchedule"},{"key":"cloud.google.com/gke-spot","operator":"Exists","effect":"NoSchedule"}],"containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-glm52-weights-staging"}}]}}'; then
             echo "ERROR: Failed to launch glm52-cache-seeder pod!" >&2; exit 1
           fi
           echo "--> Waiting for GCS cache seeder pod to complete (timeout: 3600s)..."

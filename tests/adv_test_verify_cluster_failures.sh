@@ -4,7 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 MOCK_DIR=$(mktemp -d)
 export MOCK_DIR
-trap 'rm -rf "${MOCK_DIR}"' EXIT
+cleanup_mocks() {
+  rm -rf "${MOCK_DIR}"
+  if [ "${CREATED_MOCK_CONFIG:-false}" = "true" ]; then
+    rm -f "${SCRIPT_DIR}/config.env"
+  fi
+}
+trap cleanup_mocks EXIT
 
 export PATH="${MOCK_DIR}:${PATH}"
 export PROJECT_ID="mock-test-project"
@@ -16,6 +22,10 @@ echo "==========================================================================
 
   setup_healthy_mocks() {
   rm -f "${MOCK_DIR}"/*
+  if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
+    sed 's/YOUR_PROJECT_ID/mock-test-project/g' "${SCRIPT_DIR}/config.env.example" > "${SCRIPT_DIR}/config.env"
+    export CREATED_MOCK_CONFIG="true"
+  fi
   export MOCK_AUTH_FAIL="false"
   export MOCK_NO_GATEWAY="false"
   export MOCK_BQ_EMPTY="false"
