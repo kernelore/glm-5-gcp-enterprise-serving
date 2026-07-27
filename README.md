@@ -2,8 +2,8 @@
 
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-NVFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
-[![vLLM](https://img.shields.io/badge/Inference-vLLM_0.25.1-8A2BE2?style=flat-square)](https://docs.vllm.ai/)
-[![SGLang](https://img.shields.io/badge/Inference-SGLang_v0.5.12-E50914?style=flat-square)](https://github.com/sgl-project/sglang)
+[![vLLM](https://img.shields.io/badge/Inference-vLLM_0.26.0-8A2BE2?style=flat-square)](https://docs.vllm.ai/)
+[![SGLang](https://img.shields.io/badge/Inference-SGLang_v0.5.16-E50914?style=flat-square)](https://github.com/sgl-project/sglang)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 
 > [!IMPORTANT]
@@ -103,7 +103,7 @@ To switch engines on a live cluster:
 *Note: Because both engines share the same Kubernetes Deployment name (`glm52-nvfp4-serving`) with `maxSurge: 0`, switching engines triggers an automated rolling replacement on the GPU node pool. A brief transition window occurs while the new engine container loads weights from Hyperdisk ML and captures CUDA graphs (~14m 33s / 873 seconds).*
 
 ### Engine Flag & Feature Comparison
-| Functional Domain | vLLM (`v0.25.1`) | SGLang (`v0.5.12-cu130`) | Technical Rationale & Notes |
+| Functional Domain | vLLM (`v0.26.0`) | SGLang (`v0.5.16-cu130`) | Technical Rationale & Notes |
 | :--- | :--- | :--- | :--- |
 | **Server Entrypoint** | `vllm.entrypoints.openai.api_server` | `sglang.launch_server` | OpenAI-compatible HTTP servers on port 8000. |
 | **Network Binding** | `--port=8000` | `--host 0.0.0.0 --port 8000` | SGLang defaults to 30000; explicitly binds 0.0.0.0:8000 for hostNetwork parity. |
@@ -180,7 +180,7 @@ Google Cloud Product               | Scope                                      
 **Cloud SQL for PostgreSQL**       | **Zonal** *(Default)* / **Regional** *(HA)*  | `module.database`                        | Private PostgreSQL 15 instance (`europe-north1-b`) connected via Private Services Access (`PSA`). Stores virtual API keys, user budgets, and enterprise routing rules. Upgradeable to regional HA via `availability_type = "REGIONAL"`.
 **BigQuery**                       | **Regional**                                 | `module.audit`                           | Serverless analytical dataset (`glm52_enterprise_audit.trajectories` in `europe-north1`) recording asynchronous WIF-authenticated chat completions, prompt/completion token counts, and request metadata.
 **Cloud Storage (GCS)**            | **Regional**                                 | `TF_STATE_BUCKET` / `GCS_WEIGHTS_BUCKET` | Regional buckets (`europe-north1`) hosting remote Terraform state locking (`gs://project-glm52-tfstate`) and fast-path pre-staged model shards (`gs://project-glm52-weights-backup/nvfp4`, ~4 GiB/s hydration).
-**Artifact Registry**              | **Regional**                                 | `module.storage`                         | Secure private container registry (`europe-north1`) storing pinned custom vLLM and SGLang Blackwell serving container images (`vllm-blackwell:v0.25.1`, `sglang-blackwell:v0.5.12-cu130`).
+**Artifact Registry**              | **Regional**                                 | `module.storage`                         | Secure private container registry (`europe-north1`) storing pinned custom vLLM and SGLang Blackwell serving container images (`vllm-blackwell:v0.26.0`, `sglang-blackwell:v0.5.16-cu130`).
 **Cloud Build**                    | **Regional**                                 | `scripts/03_deploy_workloads.sh`         | On-demand serverless container build pipeline compiling custom vLLM and SGLang runtimes from `docker/Dockerfile.vllm` and `docker/Dockerfile.sglang`.
 **Virtual Private Cloud (VPC)**    | **Global / Regional**                        | `module.network`                         | Private custom-mode VPC (`glm52-net-primary`) with regional subnets (`k8s-pod-net`), Private Services Access peering, and IAP SSH firewall restrictions.
 **Managed Service for Prometheus** | **Regional**                                 | `module.observability`                   | Fully managed Google Cloud Managed Service for Prometheus (`GMP`) scraping DCGM GPU kernels (`DCGM_FI_PROF_PIPE_TENSOR_ACTIVE`) and vLLM / SGLang request queues.
@@ -276,8 +276,8 @@ glm-5.2-gcp-enterprise-serving/
 │   ├── soak_benchmark_glm52.py    # 30-minute continuous stability endurance test (1,800 seconds)
 │   ├── generate_comparison.py     # Automated parity validator and README.md comparison table generator
 ├── docker/                        # Container definitions for custom serving runtimes
-│   ├── Dockerfile.vllm            # Pinned vLLM Blackwell serving container image definition (v0.25.1)
-│   ├── Dockerfile.sglang          # Pinned SGLang Blackwell B200 serving container image (v0.5.12-cu130)
+│   ├── Dockerfile.vllm            # Pinned vLLM Blackwell serving container image definition (v0.26.0)
+│   ├── Dockerfile.sglang          # Pinned SGLang Blackwell B200 serving container image (v0.5.16-cu130)
 │   └── cloudbuild.yaml            # Cloud Build configuration supporting dynamic image/Dockerfile substitutions
 ├── scripts/                       # Automated lifecycle Bash & Python scripts
 │   ├── config.env.example         # Template configuration for environment variables, engine knob, and tags
