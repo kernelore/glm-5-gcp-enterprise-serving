@@ -15,17 +15,23 @@ spec:
   minReplicas: 1
   maxReplicas: ${GPU_MAX_NODES}
   metrics:
-  - type: Pods
-    pods:
+  - type: External
+    external:
       metric:
         name: prometheus.googleapis.com|${HPA_QUEUE_METRIC}
+        selector:
+          matchLabels:
+            metric.labels.top_level_controller_name: glm52-nvfp4-serving
       target:
         type: AverageValue
         averageValue: "16"
-  - type: Pods
-    pods:
+  - type: External
+    external:
       metric:
         name: prometheus.googleapis.com|${HPA_RUNNING_METRIC}
+        selector:
+          matchLabels:
+            metric.labels.top_level_controller_name: glm52-nvfp4-serving
       target:
         type: AverageValue
         averageValue: "20"

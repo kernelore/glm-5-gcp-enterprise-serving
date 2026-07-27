@@ -118,8 +118,8 @@ SGLANG_IMAGE_TAG="v0.5.16-cu130"
 VLLM_IMAGE_TAG="v0.26.0"
 export WEIGHTS_DOWNLOADER_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:${VLLM_IMAGE_TAG}"
 if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
-  export HPA_QUEUE_METRIC="sglang:num_queue_reqs|gauge"
-  export HPA_RUNNING_METRIC="sglang:num_running_reqs|gauge"
+  export HPA_QUEUE_METRIC="sglang_num_queue_reqs|unknown"
+  export HPA_RUNNING_METRIC="sglang_num_running_reqs|unknown"
   IMAGE_NAME="sglang-blackwell"
   IMAGE_TAG="${SGLANG_IMAGE_TAG}"
   DOCKERFILE="Dockerfile.sglang"
@@ -164,7 +164,9 @@ fi
 
 # 2. Check and self-heal container image in Artifact Registry (seeding via Cloud Build if missing)
 echo "--> 2. Verifying ${INFERENCE_ENGINE} container image (${SERVING_IMAGE}) in Artifact Registry..."
-if command -v gcloud >/dev/null 2>&1; then
+if [ "${SKIP_IMAGE_BUILD:-false}" = "true" ]; then
+  echo "    [INFO] SKIP_IMAGE_BUILD=true: Skipping container image verification/build in deploy script."
+elif command -v gcloud >/dev/null 2>&1; then
   if ! gcloud artifacts docker tags list "${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/${IMAGE_NAME}" --format="value(tag)" --quiet 2>/dev/null | grep -E -q "^${IMAGE_TAG//./\\.}$"; then
     echo "    [INFO] Container image ${IMAGE_NAME}:${IMAGE_TAG} not found in ${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod."
     echo "    --> Triggering container build via Google Cloud Build from docker/${DOCKERFILE}..."
@@ -264,8 +266,11 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
           else
             echo "    Bucket ${BUCKET_ROOT} already exists."
           fi
+          gcloud storage buckets add-iam-policy-binding "${BUCKET_ROOT}" \
+            --member="serviceAccount:glm52-vllm-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --role="roles/storage.objectAdmin" --quiet 2>/dev/null || true
           kubectl delete pod glm52-cache-seeder -n llm-serving --ignore-not-found=true >/dev/null 2>&1
-          if ! kubectl run glm52-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"glm52-vllm-sa","nodeSelector":{"cloud.google.com/gke-accelerator":"nvidia-b200","cloud.google.com/gke-spot":"true"},"tolerations":[{"key":"nvidia.com/gpu","operator":"Exists","effect":"NoSchedule"},{"key":"cloud.google.com/gke-spot","operator":"Exists","effect":"NoSchedule"}],"containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-glm52-weights-staging"}}]}}'; then
+          if ! kubectl run glm52-cache-seeder --namespace=llm-serving --restart=Never --image=google/cloud-sdk:slim --overrides='{"spec":{"serviceAccountName":"glm52-vllm-sa","containers":[{"name":"seeder","image":"google/cloud-sdk:slim","command":["gcloud","storage","rsync","-r","/weights","'"${GCS_WEIGHTS_BUCKET}"'"],"volumeMounts":[{"name":"w","mountPath":"/weights"}]}],"volumes":[{"name":"w","persistentVolumeClaim":{"claimName":"pvc-glm52-weights-staging"}}]}}'; then
             echo "ERROR: Failed to launch glm52-cache-seeder pod!" >&2; exit 1
           fi
           echo "--> Waiting for GCS cache seeder pod to complete (timeout: 3600s)..."
@@ -342,6 +347,11 @@ if [ "${SKIP_WEIGHT_JOB:-false}" != "true" ] && [ "${SKIP_WEIGHT_JOB:-false}" !=
   fi
 else
   echo "--> 5. Skipping weight staging job as SKIP_WEIGHT_JOB=${SKIP_WEIGHT_JOB} or serving is already active."
+fi
+
+if [ "${SKIP_SERVING_DEPLOY:-false}" = "true" ]; then
+  echo "--> SKIP_SERVING_DEPLOY=true: Stopping after weight staging. Serving and gateway manifests not applied."
+  exit 0
 fi
 
 # 5. Apply selected serving engine deployment

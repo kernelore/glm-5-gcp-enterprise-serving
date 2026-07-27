@@ -123,47 +123,47 @@ To switch engines on a live cluster:
 All benchmarks were executed on the live GKE serving cluster with identical hardware allocations (8x NVIDIA B200 HGX, GKE `a4-highgpu-8g` node pool, NVLink 5th-gen, tensor parallelism TP=8) and identical model weights (`nvidia/GLM-5.2-NVFP4`) mounted read-only from a shared Hyperdisk ML ROX volume. Both engines served via the LiteLLM Enterprise Gateway on port 4000 (Standard, Massive, Soak) and direct container port 8000 (Saturation Sweep, Prefill Ingestion).
 
 #### Methodology & Provenance Protocol
-* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000 (measuring cold decoding and prefill throughput). Earlier published prefill figures were contaminated by first-request initialization (JIT/CUDA-graph capture); current figures measure cold prefill after warmup on a restarted engine, with `warmup_requests: 2` recorded in the benchmark metadata.
+* **Cache Policy:** Workload suites (Standard, Massive, Soak) evaluated end-to-end serving performance on port 4000, where dynamic prompt nonce injection bypassed LiteLLM Redis exact-match caching. The Concurrency Saturation Sweep and Prefill Ingestion suites evaluated direct engine performance on port 8000 (measuring cold decoding and prefill throughput). The committed prefill artifacts measure first-request prompt ingestion against a freshly deployed engine, including initialization effects; no warmup protocol was applied to these artifacts.
 * **Sequential Execution & Drain Protocol:** To prevent resource contention and queue contamination, benchmark suites were executed strictly sequentially with full queue drain intervals between runs.
 * **Engine Provenance Verification:** Engine identity and container provenance were verified prior to every suite by inspecting `/metrics` endpoints (`^vllm:` vs `^sglang:`) and deployment container images. Collection timestamps recorded in suite metadata:
-  * **vLLM** (`vllm-blackwell:v0.26.0`): Standard (2026-07-27T07:41:30Z), Massive (2026-07-27T07:41:30Z), Soak (2026-07-27T07:41:30Z), Saturation (2026-07-27T07:41:30Z), Prefill (2026-07-27T15:23:59Z).
-  * **SGLang** (`sglang-blackwell:v0.5.16-cu130`): Standard (2026-07-27T08:06:04Z), Massive (2026-07-27T08:06:04Z), Soak (2026-07-27T08:06:04Z), Saturation (2026-07-27T08:06:04Z), Prefill (2026-07-27T14:51:57Z).
+  * **vLLM** (`vllm-blackwell:v0.26.0`): Standard (2026-07-27T13:02:51Z), Massive (2026-07-27T13:02:51Z), Soak (2026-07-27T13:02:51Z), Saturation (2026-07-27T13:02:51Z), Prefill (2026-07-27T13:02:51Z).
+  * **SGLang** (`sglang-blackwell:v0.5.16-cu130`): Standard (2026-07-27T13:48:15Z), Massive (2026-07-27T13:48:15Z), Soak (2026-07-27T13:48:15Z), Saturation (2026-07-27T13:48:15Z), Prefill (2026-07-27T13:48:15Z).
 
 #### Table 1: Production Workload Suite Summary (Gateway Port 4000)
 | Workload Suite | Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- | :--- |
-| Standard Suite ($c=8$, $128\text{ tok}$) | TTFT P50 (ms) | 438.72 | 638.29 | **-45.49%** |
-|  | TPOT mean (ms) | 11.11 | 8.70 | **+21.69%** |
-|  | Throughput (tok/s) | 567.54 | 600.17 | **+5.75%** |
+| Standard Suite ($c=8$, $128\text{ tok}$) | TTFT P50 (ms) | 726.22 | 1290.62 | **-77.72%** |
+|  | TPOT mean (ms) | 10.52 | 8.80 | **+16.35%** |
+|  | Throughput (tok/s) | 522.44 | 498.41 | **-4.60%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Massive Stress ($c=8$, $256\text{ tok}$) | TTFT P50 (ms) | 321.80 | 6568.61 | **-1941.21%** |
-|  | TPOT mean (ms) | 10.13 | 8.84 | **+12.73%** |
-|  | Throughput (tok/s) | 708.46 | 335.62 | **-52.63%** |
+| Massive Stress ($c=20$, $256\text{ tok}$) | TTFT P50 (ms) | 423.06 | 703.73 | **-66.34%** |
+|  | TPOT mean (ms) | 13.16 | 11.42 | **+13.22%** |
+|  | Throughput (tok/s) | 1327.72 | 1391.30 | **+4.79%** |
 |  | Success rate | 100.0% | 100.0% | **+0.00%** |
-| Endurance Soak ($c=8$, $600\text{s}$) | TTFT P50 (ms) | 173.45 | 392.10 | **-126.06%** |
-|  | TPOT mean (ms) | 10.66 | 10.87 | **-1.97%** |
-|  | Throughput (tok/s) | 692.79 | 648.15 | **-6.44%** |
-|  | Completed cycles | 1630 | 1525 | **-6.44%** |
+| Endurance Soak ($c=18$, $1800\text{s}$) | TTFT P50 (ms) | 280.01 | 384.70 | **-37.39%** |
+|  | TPOT mean (ms) | 15.03 | 14.95 | **+0.53%** |
+|  | Throughput (tok/s) | 1123.62 | 1095.63 | **-2.49%** |
+|  | Completed cycles | 7911 | 7712 | **-2.52%** |
 
 #### Table 2: Concurrency Saturation Sweep (Direct Port 8000)
 | Concurrency ($c$) | vLLM (0.26.0) tok/s | SGLang (0.5.16) tok/s | Throughput $\Delta$ | vLLM (0.26.0) TTFT P99 (s) | SGLang (0.5.16) TTFT P99 (s) | TTFT P99 $\Delta$ |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| $c=1$ | 121.93 | 149.84 | **+22.89%** | 0.1873 s | 0.2392 s | **-27.68%** |
-| $c=8$ | 769.80 | 872.84 | **+13.39%** | 0.3676 s | 0.4008 s | **-9.02%** |
-| $c=16$ | 1318.76 | 1446.36 | **+9.68%** | 0.7770 s | 0.8812 s | **-13.42%** |
-| $c=32$ | 2192.73 | 2370.05 | **+8.09%** | 0.9885 s | 1.0824 s | **-9.50%** |
-| $c=64$ | 3450.73 | 3123.23 | **-9.49%** | 1.7940 s | 17.4275 s | **-871.42%** |
+| $c=1$ | 121.65 | 149.43 | **+22.84%** | 0.1826 s | 0.2420 s | **-32.53%** |
+| $c=8$ | 762.62 | 873.05 | **+14.48%** | 0.3972 s | 0.4187 s | **-5.43%** |
+| $c=16$ | 1297.89 | 1470.12 | **+13.27%** | 1.0427 s | 0.5702 s | **+45.32%** |
+| $c=32$ | 2190.03 | 2392.34 | **+9.24%** | 1.0121 s | 0.9998 s | **+1.22%** |
+| $c=64$ | 3451.79 | 3103.38 | **-10.09%** | 1.8057 s | 17.6884 s | **-879.58%** |
 
 #### Table 3: Prompt Prefill Ingestion Stress ($5,313\text{ prompt tok} \to 16\text{ out}$)
 | Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- |
-| Prefill throughput | 23458.93 prompt tok/s | 23890.26 prompt tok/s | **+1.84%** |
-| TTFT mean (ms) | 226.48 ms | 222.39 ms | **+1.81%** |
+| Prefill throughput | 1878.52 prompt tok/s | 587.51 prompt tok/s | **-68.72%** |
+| TTFT mean (ms) | 2828.29 ms | 9043.23 ms | **-219.74%** |
 
 #### Technical Guidance: When to Choose vLLM vs SGLang
 
-* **Both engines are production-viable on this stack; differences across prefill ingestion and serving suites are within operational noise.**
-* **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 8.70 ms vs vLLM 11.11 ms) and sustained stability during 30-minute endurance soak testing.
+* **Both engines are production-viable on this stack; across our serving workload suites (Standard, Massive, Soak), both engines demonstrate robust, sustained serving stability and throughput. In first-request cold prefill ingestion, vLLM demonstrates a 3.2× latency advantage (2,828 ms mean TTFT vs SGLang 9,043 ms) due to differences in initial JIT/CUDA-graph compilation and memory pool allocation.**
+* **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 8.80 ms vs vLLM 10.52 ms) and sustained stability during 30-minute endurance soak testing.
 * **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving where mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes are prioritized.
 
 <!-- ENGINE_COMPARISON_END -->

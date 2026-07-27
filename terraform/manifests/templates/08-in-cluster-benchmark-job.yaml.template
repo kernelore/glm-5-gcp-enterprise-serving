@@ -41,7 +41,7 @@ data:
           exit 1
         fi
         local metrics_payload
-        if ! metrics_payload=$(python3 -c "import urllib.request; print(urllib.request.urlopen('${metrics_url}', timeout=5).read().decode('utf-8', 'ignore'))" 2>/dev/null); then
+        if ! metrics_payload=$(python3 -c "import urllib.request; print(urllib.request.urlopen('${metrics_url}', timeout=5).read().decode('utf-8'))" 2>/dev/null); then
           echo "    [CHECK] Failed to reach ${metrics_url}. Resetting consecutive zero check count."
           zero_count=0
         else
@@ -68,7 +68,7 @@ data:
 
     wait_for_quiesce 300 15
 
-    if [ "${BENCHMARK_MODE}" = "prefill" ]; then
+    if [ "${BENCHMARK_MODE}" = "prefill" ] || [ "${BENCHMARK_MODE}" = "all" ]; then
       echo "Running in-cluster prefill ingestion benchmark (isolated baseline)..."
       python3 /scripts/run_prefill_benchmark.py \
         --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \

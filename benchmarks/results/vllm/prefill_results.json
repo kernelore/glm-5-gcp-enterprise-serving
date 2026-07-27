@@ -1,16 +1,16 @@
 {
   "prompt_tokens": 5313,
   "token_count_source": "usage",
-  "ttft_sec": 0.05020546913146973,
-  "ttft_ms": 50.20546913146973,
-  "prefill_tok_s_system": 105825.12407337934,
-  "prefill_tok_s_per_gpu": 13228.140509172417,
+  "ttft_sec": 2.8282933235168457,
+  "ttft_ms": 2828.2933235168457,
+  "prefill_tok_s_system": 1878.5180291673362,
+  "prefill_tok_s_per_gpu": 234.81475364591702,
   "metadata": {
     "engine": "vllm",
     "engine_version": "0.26.0",
     "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.26.0",
     "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\n    --tensor-parallel-size=8 \\\\\\n    --pipeline-parallel-size=1 \\\\\\n    --served-model-name=glm-5.2-moe \\\\\\n    --port=8000 \\\\\\n    --kv-cache-dtype=auto \\\\\\n    --enable-prefix-caching \\\\\\n    --enable-chunked-prefill \\\\\\n    --max-num-seqs=64 \\\\\\n    --max-num-batched-tokens=8192 \\\\\\n    --max-model-len=131072 \\\\\\n    --gpu-memory-utilization=0.94\\n\"]",
-    "run_timestamp": "2026-07-27T07:41:30Z",
+    "run_timestamp": "2026-07-27T13:02:51Z",
     "runs": 1
   },
   "prefill_config": {
@@ -22,11 +22,11 @@
       "engine_version": "0.26.0",
       "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/vllm-blackwell:v0.26.0",
       "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m vllm.entrypoints.openai.api_server \\\\\\n    --model=/mnt/hyperdisk-ml \\\\\\n    --tensor-parallel-size=8 \\\\\\n    --pipeline-parallel-size=1 \\\\\\n    --served-model-name=glm-5.2-moe \\\\\\n    --port=8000 \\\\\\n    --kv-cache-dtype=auto \\\\\\n    --enable-prefix-caching \\\\\\n    --enable-chunked-prefill \\\\\\n    --max-num-seqs=64 \\\\\\n    --max-num-batched-tokens=8192 \\\\\\n    --max-model-len=131072 \\\\\\n    --gpu-memory-utilization=0.94\\n\"]",
-      "run_timestamp": "2026-07-27T07:41:30Z",
+      "run_timestamp": "2026-07-27T13:02:51Z",
       "runs": 1
     },
-    "suite_start_ts": "2026-07-27T07:55:01Z",
-    "suite_end_ts": "2026-07-27T07:55:01Z",
-    "suite_duration_s": 0.0506
+    "suite_start_ts": "2026-07-27T13:03:23Z",
+    "suite_end_ts": "2026-07-27T13:03:26Z",
+    "suite_duration_s": 2.8287
   }
 }

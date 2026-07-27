@@ -257,18 +257,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   fi
   export BENCHMARK_METADATA="${METADATA_JSON}"
   # shellcheck disable=SC2016
-  python3 -c '
-import os, sys, re
-content = sys.stdin.read()
-allowed = {"BENCHMARK_MODE", "BENCHMARK_CONCURRENCY", "BENCHMARK_DURATION", "BENCHMARK_REQUESTS", "BENCHMARK_METADATA", "ENV_LABEL", "GATEWAY_MASTER_KEY", "OWNER_LABEL", "INFERENCE_SERVER_LABEL", "VLLM_VIP", "SERVING_VIP", "PROJECT_ID", "REGION", "ZONE", "CLUSTER_NAME"}
-def replace_var(match):
-    var_name = match.group(1) or match.group(2)
-    if var_name in allowed:
-        return os.environ.get(var_name, "")
-    return match.group(0)
-output = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", replace_var, content)
-sys.stdout.write(output)
-' < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
+  envsubst '${ENV_LABEL} ${OWNER_LABEL} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA}' < "${TEMPLATE_DIR}/08-in-cluster-benchmark-job.yaml.template" > "${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml"
 
   echo "    Applying in-cluster benchmark Job (${GENERATED_DIR}/08-in-cluster-benchmark-job.yaml)..."
   kubectl delete job glm52-incluster-benchmark -n llm-serving --ignore-not-found=true
@@ -308,29 +297,13 @@ sys.stdout.write(output)
   if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
     kubectl cp -n llm-serving "${POD_NAME}:/results/saturation_results.json" "${RESULT_DIR}/saturation_results.json" || echo "WARNING: Could not copy saturation_results.json"
   fi
-  if [ "${MODE}" = "prefill" ]; then
+  if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
     kubectl cp -n llm-serving "${POD_NAME}:/results/prefill_results.json" "${RESULT_DIR}/prefill_results.json" || echo "WARNING: Could not copy prefill_results.json"
   fi
 
   # Signal pod that extraction is complete so it can exit 0 cleanly
   kubectl exec -n llm-serving "${POD_NAME}" -- touch /results/.extracted 2>/dev/null || true
   echo "    [OK] In-cluster benchmark job execution finished and results saved to ${RESULT_DIR}."
-
-  if [ "${MODE}" = "all" ]; then
-    echo ""
-    echo "------------------------------------------------------------------------------"
-    echo "--> Executing Cold-Engine Prefill Ingestion Suite (Isolated Baseline)..."
-    echo "------------------------------------------------------------------------------"
-    echo "    Restarting serving deployment to guarantee a cold cache and 0% prefix hits..."
-    kubectl rollout restart deployment/glm52-nvfp4-serving -n llm-serving 2>/dev/null || kubectl rollout restart deployment/glm52-sglang-serving -n llm-serving 2>/dev/null || true
-    echo "    Waiting for restarted serving pod to attach ROX volume and become Ready..."
-    kubectl rollout status deployment/glm52-nvfp4-serving -n llm-serving --timeout=900s 2>/dev/null || kubectl rollout status deployment/glm52-sglang-serving -n llm-serving --timeout=900s 2>/dev/null || true
-    sleep 15
-    echo "    Launching isolated in-cluster prefill benchmark..."
-    export BENCHMARK_RESTARTED_BEFORE_SUITE="true"
-    bash "$0" --mode prefill --in-cluster
-    unset BENCHMARK_RESTARTED_BEFORE_SUITE || true
-  fi
   exit 0
 fi
 
@@ -407,7 +380,7 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
 fi
 
 # 7. Execute Prefill Ingestion Benchmark Suite
-if [ "${MODE}" = "prefill" ]; then
+if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> 6. Executing Prefill Ingestion Suite (8192 prompt tokens in / 16 out)..."
@@ -420,22 +393,6 @@ if [ "${MODE}" = "prefill" ]; then
   )
 
   python3 "${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" "${PREF_ARGS[@]}" || echo "WARNING: Prefill benchmark reported errors or timeouts."
-fi
-
-if [ "${MODE}" = "all" ]; then
-  echo ""
-  echo "------------------------------------------------------------------------------"
-  echo "--> 6. Executing Cold-Engine Prefill Ingestion Suite (Isolated Baseline)..."
-  echo "------------------------------------------------------------------------------"
-  echo "    Restarting serving deployment to guarantee a cold cache and 0% prefix hits..."
-  kubectl rollout restart deployment/glm52-nvfp4-serving -n llm-serving 2>/dev/null || kubectl rollout restart deployment/glm52-sglang-serving -n llm-serving 2>/dev/null || true
-  echo "    Waiting for restarted serving pod to attach ROX volume and become Ready..."
-  kubectl rollout status deployment/glm52-nvfp4-serving -n llm-serving --timeout=900s 2>/dev/null || kubectl rollout status deployment/glm52-sglang-serving -n llm-serving --timeout=900s 2>/dev/null || true
-  sleep 15
-  echo "    Launching isolated prefill benchmark..."
-  export BENCHMARK_RESTARTED_BEFORE_SUITE="true"
-  bash "$0" --mode prefill
-  unset BENCHMARK_RESTARTED_BEFORE_SUITE || true
 fi
 
 # 8. Display Benchmark Summary

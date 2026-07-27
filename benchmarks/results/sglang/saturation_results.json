@@ -4,17 +4,17 @@
     "engine_version": "0.5.16",
     "image": "europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.16-cu130",
     "launch_flags": "[\"set -euo pipefail\\ntrap 'echo \\\"Spot preemption received! Draining requests within 25s budget...\\\"; sleep 20; exit 0' SIGTERM\\n\\nexport CUDA_HOME=/usr/local/cuda\\nexport PATH=/usr/local/cuda/bin:${PATH}\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\n\\nexec python3 -m sglang.launch_server \\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\n    --served-model-name glm-5.2-moe \\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\n    --tp-size 8 \\\\\\n    --context-length 131072 \\\\\\n    --max-running-requests 64 \\\\\\n    --chunked-prefill-size 8192 \\\\\\n    --mem-fraction-static 0.90 \\\\\\n    --kv-cache-dtype auto \\\\\\n    --quantization modelopt_fp4 \\\\\\n    --disable-shared-experts-fusion \\\\\\n    --reasoning-parser glm45 \\\\\\n    --tool-call-parser glm47 \\\\\\n    --enable-metrics\\n\"]",
-    "run_timestamp": "2026-07-27T08:06:04Z",
+    "run_timestamp": "2026-07-27T13:48:15Z",
     "runs": 1
   },
   "sweep_config": {
     "endpoint": "http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions",
     "model": "glm-5.2-moe",
     "output": "/results/saturation_results.json",
-    "metadata": "{\"engine\": \"sglang\", \"engine_version\": \"0.5.16\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.16-cu130\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m sglang.launch_server \\\\\\\\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\\\\\\\n    --served-model-name glm-5.2-moe \\\\\\\\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\\\\\\\n    --tp-size 8 \\\\\\\\\\\\n    --context-length 131072 \\\\\\\\\\\\n    --max-running-requests 64 \\\\\\\\\\\\n    --chunked-prefill-size 8192 \\\\\\\\\\\\n    --mem-fraction-static 0.90 \\\\\\\\\\\\n    --kv-cache-dtype auto \\\\\\\\\\\\n    --quantization modelopt_fp4 \\\\\\\\\\\\n    --disable-shared-experts-fusion \\\\\\\\\\\\n    --reasoning-parser glm45 \\\\\\\\\\\\n    --tool-call-parser glm47 \\\\\\\\\\\\n    --enable-metrics\\\\n\\\"]\", \"run_timestamp\": \"2026-07-27T08:06:04Z\", \"runs\": 1}",
-    "suite_start_ts": "2026-07-27T08:16:36Z",
-    "suite_end_ts": "2026-07-27T08:19:32Z",
-    "suite_duration_s": 176.0461
+    "metadata": "{\"engine\": \"sglang\", \"engine_version\": \"0.5.16\", \"image\": \"europe-north1-docker.pkg.dev/YOUR_PROJECT_ID/glm-prod/sglang-blackwell:v0.5.16-cu130\", \"launch_flags\": \"[\\\"set -euo pipefail\\\\ntrap 'echo \\\\\\\"Spot preemption received! Draining requests within 25s budget...\\\\\\\"; sleep 20; exit 0' SIGTERM\\\\n\\\\nexport CUDA_HOME=/usr/local/cuda\\\\nexport PATH=/usr/local/cuda/bin:${PATH}\\\\nexport LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}\\\\n\\\\nexec python3 -m sglang.launch_server \\\\\\\\\\\\n    --model-path /mnt/hyperdisk-ml \\\\\\\\\\\\n    --served-model-name glm-5.2-moe \\\\\\\\\\\\n    --host 0.0.0.0 --port 8000 \\\\\\\\\\\\n    --tp-size 8 \\\\\\\\\\\\n    --context-length 131072 \\\\\\\\\\\\n    --max-running-requests 64 \\\\\\\\\\\\n    --chunked-prefill-size 8192 \\\\\\\\\\\\n    --mem-fraction-static 0.90 \\\\\\\\\\\\n    --kv-cache-dtype auto \\\\\\\\\\\\n    --quantization modelopt_fp4 \\\\\\\\\\\\n    --disable-shared-experts-fusion \\\\\\\\\\\\n    --reasoning-parser glm45 \\\\\\\\\\\\n    --tool-call-parser glm47 \\\\\\\\\\\\n    --enable-metrics\\\\n\\\"]\", \"run_timestamp\": \"2026-07-27T13:48:15Z\", \"runs\": 1}",
+    "suite_start_ts": "2026-07-27T14:21:14Z",
+    "suite_end_ts": "2026-07-27T14:24:10Z",
+    "suite_duration_s": 175.83
   },
   "sweep_results": [
     {
@@ -24,21 +24,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 8192,
-      "total_duration_sec": 54.67192339897156,
-      "aggregate_tok_s": 149.8392500336672,
-      "per_gpu_tok_s": 18.7299062542084,
-      "per_user_tok_s": 149.8392500336672,
+      "total_duration_sec": 54.82166814804077,
+      "aggregate_tok_s": 149.42996586456056,
+      "per_gpu_tok_s": 18.67874573307007,
+      "per_user_tok_s": 149.42996586456056,
       "ttft_ms": {
-        "mean": 228.4967601299286,
-        "p50": 229.63643074035645,
-        "p90": 239.1672134399414,
-        "p99": 239.1672134399414
+        "mean": 227.23722457885742,
+        "p50": 229.03060913085938,
+        "p90": 241.96743965148926,
+        "p99": 241.96743965148926
       },
       "tpot_ms": {
-        "mean": 6.481019156720851,
-        "p50": 6.460905075073242,
-        "p90": 6.585836410522461,
-        "p99": 6.762981414794922
+        "mean": 6.4870306321582,
+        "p50": 6.474018096923828,
+        "p90": 6.615400314331055,
+        "p99": 6.786346435546875
       }
     },
     {
@@ -48,21 +48,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 16384,
-      "total_duration_sec": 18.77099347114563,
-      "aggregate_tok_s": 872.8360608715321,
-      "per_gpu_tok_s": 109.10450760894152,
-      "per_user_tok_s": 109.10450760894152,
+      "total_duration_sec": 18.76645517349243,
+      "aggregate_tok_s": 873.0471390858278,
+      "per_gpu_tok_s": 109.13089238572847,
+      "per_user_tok_s": 109.13089238572847,
       "ttft_ms": {
-        "mean": 392.4982398748398,
-        "p50": 396.1472511291504,
-        "p90": 400.6035327911377,
-        "p99": 400.754451751709
+        "mean": 400.7416218519211,
+        "p50": 413.85412216186523,
+        "p90": 417.60921478271484,
+        "p99": 418.72239112854004
       },
       "tpot_ms": {
-        "mean": 8.840474716501756,
-        "p50": 8.792638778686523,
-        "p90": 9.543180465698242,
-        "p99": 10.411977767944336
+        "mean": 8.93952365177755,
+        "p50": 8.79049301147461,
+        "p90": 9.523391723632812,
+        "p99": 17.505407333374023
       }
     },
     {
@@ -72,21 +72,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 32768,
-      "total_duration_sec": 22.65542244911194,
-      "aggregate_tok_s": 1446.3645546050923,
-      "per_gpu_tok_s": 180.79556932563654,
-      "per_user_tok_s": 90.39778466281827,
+      "total_duration_sec": 22.289367198944092,
+      "aggregate_tok_s": 1470.1180032402315,
+      "per_gpu_tok_s": 183.76475040502893,
+      "per_user_tok_s": 91.88237520251447,
       "ttft_ms": {
-        "mean": 711.7826193571091,
-        "p50": 873.366117477417,
-        "p90": 879.5571327209473,
-        "p99": 881.2041282653809
+        "mean": 553.5713136196136,
+        "p50": 552.1602630615234,
+        "p90": 564.6340847015381,
+        "p99": 570.159912109375
       },
       "tpot_ms": {
-        "mean": 10.382642088335711,
-        "p50": 10.3759765625,
-        "p90": 11.84225082397461,
-        "p99": 13.039350509643555
+        "mean": 10.360288164571621,
+        "p50": 10.342121124267578,
+        "p90": 11.636734008789062,
+        "p99": 12.716054916381836
       }
     },
     {
@@ -96,21 +96,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 65536,
-      "total_duration_sec": 27.65176510810852,
-      "aggregate_tok_s": 2370.0476169885596,
-      "per_gpu_tok_s": 296.25595212356995,
-      "per_user_tok_s": 74.06398803089249,
+      "total_duration_sec": 27.394054412841797,
+      "aggregate_tok_s": 2392.3439375690955,
+      "per_gpu_tok_s": 299.04299219613694,
+      "per_user_tok_s": 74.76074804903423,
       "ttft_ms": {
-        "mean": 989.4440174102783,
-        "p50": 1061.391830444336,
-        "p90": 1078.1104564666748,
-        "p99": 1082.3602676391602
+        "mean": 932.2160556912422,
+        "p50": 979.0909290313721,
+        "p90": 994.9946403503418,
+        "p99": 999.7856616973877
       },
       "tpot_ms": {
-        "mean": 12.583465751225129,
-        "p50": 12.521982192993164,
-        "p90": 14.946699142456055,
-        "p99": 17.022132873535156
+        "mean": 12.479040510673062,
+        "p50": 12.440919876098633,
+        "p90": 14.485836029052734,
+        "p99": 16.041278839111328
       }
     },
     {
@@ -120,21 +120,21 @@
       "error_rate_pct": 0.0,
       "token_count_source": "usage",
       "total_tokens": 131072,
-      "total_duration_sec": 41.96681785583496,
-      "aggregate_tok_s": 3123.229415445805,
-      "per_gpu_tok_s": 390.4036769307256,
-      "per_user_tok_s": 48.8004596163407,
+      "total_duration_sec": 42.23521375656128,
+      "aggregate_tok_s": 3103.3819493724677,
+      "per_gpu_tok_s": 387.92274367155846,
+      "per_user_tok_s": 48.49034295894481,
       "ttft_ms": {
-        "mean": 1864.8272268474102,
-        "p50": 1723.1895923614502,
-        "p90": 1760.960340499878,
-        "p99": 17427.510261535645
+        "mean": 1873.0867374688387,
+        "p50": 1696.695327758789,
+        "p90": 1727.628469467163,
+        "p99": 17688.414573669434
       },
       "tpot_ms": {
-        "mean": 15.280554517686625,
-        "p50": 15.273332595825195,
-        "p90": 19.40441131591797,
-        "p99": 22.97520637512207
+        "mean": 15.255642910296013,
+        "p50": 15.279769897460938,
+        "p90": 18.716812133789062,
+        "p99": 21.59881591796875
       }
     }
   ]

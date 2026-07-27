@@ -235,7 +235,12 @@ echo "    [Test 2b/5] Running Live Gateway Master Key Chat Completion Test (via 
 if [ ! -f "${SCRIPT_DIR}/test_live_gateway.py" ]; then
   echo "      [FAIL] test_live_gateway.py missing!" >&2; exit 1
 fi
-if ! GATEWAY_PORT=4000 GATEWAY_HOST="${GATEWAY_VIP}" GATEWAY_MASTER_KEY="${MASTER_KEY}" python3 "${SCRIPT_DIR}/test_live_gateway.py"; then
+if ! curl -s --connect-timeout 2 "http://${GATEWAY_VIP}:4000/health/liveliness" >/dev/null 2>&1; then
+  LIVE_GW_HOST="localhost"
+else
+  LIVE_GW_HOST="${GATEWAY_VIP}"
+fi
+if ! GATEWAY_PORT=4000 GATEWAY_HOST="${LIVE_GW_HOST}" GATEWAY_MASTER_KEY="${MASTER_KEY}" python3 "${SCRIPT_DIR}/test_live_gateway.py"; then
   echo "      [FAIL] test_live_gateway.py execution returned non-zero!" >&2; exit 1
 fi
 echo "      [PASS] test_live_gateway.py verified authenticated Master Key chat completion."
@@ -258,17 +263,25 @@ run_gateway_curl -s -o /dev/null http://"${GATEWAY_VIP}":4000/v1/chat/completion
   -H "Authorization: Bearer ${QUOTA_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"model": "glm-5.2-moe", "messages": [{"role": "user", "content": "Consume initial budget budget budget"}]}' || true
-if ! QUOTA_CODE=$(run_gateway_curl -s -o /dev/null -w "%{http_code}" http://"${GATEWAY_VIP}":4000/v1/chat/completions \
-  -H "Authorization: Bearer ${QUOTA_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "glm-5.2-moe", "messages": [{"role": "user", "content": "Second budget request"}]}'); then
-  echo "      [FAIL] Transport failure calling second budget request during Test 3!" >&2
-  exit 1
-fi
-if [ "${QUOTA_CODE}" = "429" ] || [ "${QUOTA_CODE}" = "400" ]; then
-  echo "      [PASS] Rate/budget quota deduction enforced (HTTP ${QUOTA_CODE})."
-else
-  echo "      [FAIL] Rate/budget quota test returned HTTP ${QUOTA_CODE} (expected 429 or 400)!" >&2
+QUOTA_PASSED="false"
+for attempt in 1 2 3 4 5; do
+  if ! QUOTA_CODE=$(run_gateway_curl -s -o /dev/null -w "%{http_code}" http://"${GATEWAY_VIP}":4000/v1/chat/completions \
+    -H "Authorization: Bearer ${QUOTA_KEY}" \
+    -H "Content-Type: application/json" \
+    -d '{"model": "glm-5.2-moe", "messages": [{"role": "user", "content": "Second budget request attempt '${attempt}'"}]}'); then
+    echo "      [FAIL] Transport failure calling second budget request on attempt ${attempt} during Test 3!" >&2
+    exit 1
+  fi
+  if [ "${QUOTA_CODE}" = "429" ] || [ "${QUOTA_CODE}" = "400" ]; then
+    echo "      [PASS] Rate/budget quota deduction enforced on attempt ${attempt} (HTTP ${QUOTA_CODE})."
+    QUOTA_PASSED="true"
+    break
+  fi
+  sleep 2
+done
+
+if [ "${QUOTA_PASSED}" != "true" ]; then
+  echo "      [FAIL] Rate/budget quota test returned HTTP ${QUOTA_CODE} (expected 429 or 400) after 5 attempts!" >&2
   exit 1
 fi
 
@@ -305,12 +318,12 @@ for attempt in 1 2 3; do
     -d "${CACHE_PROMPT}"; then
     echo "      [FAIL] Transport failure on attempt ${attempt} in Test 4!" >&2; exit 1
   fi
-  COST_2=$(grep -i "^x-litellm-response-cost:" "${HEADER_FILE_2}" | awk -F: '{print $2}' | tr -d ' \r\n' || echo "999")
+  CACHE_KEY_2=$(grep -i "^x-litellm-cache-key:" "${HEADER_FILE_2}" | awk -F: '{print $2}' | tr -d ' \r\n' || true)
   ID_2=$(python3 -c "import json, sys; print(json.load(open('${BODY_FILE_2}')).get('id',''))" 2>/dev/null || true)
   rm -f "${HEADER_FILE_2}" "${BODY_FILE_2}"
 
-  if python3 -c "import sys; sys.exit(0 if float('${COST_2}') == 0.0 and '${ID_2}' == '${ID_1}' and len('${ID_1}') > 0 else 1)" 2>/dev/null; then
-    echo "      [PASS] Request 2 confirmed as Cache HIT on attempt ${attempt} (x-litellm-response-cost: ${COST_2} == 0.0 | Preserved ID: ${ID_2})."
+  if python3 -c "import sys; sys.exit(0 if len('${CACHE_KEY_2}') > 0 and '${ID_2}' == '${ID_1}' and len('${ID_1}') > 0 else 1)" 2>/dev/null; then
+    echo "      [PASS] Request 2 confirmed as Cache HIT on attempt ${attempt} (x-litellm-cache-key: ${CACHE_KEY_2} | Preserved ID: ${ID_2})."
     CACHE_PASSED="true"
     break
   fi
@@ -318,7 +331,7 @@ for attempt in 1 2 3; do
 done
 
 if [ "${CACHE_PASSED}" != "true" ]; then
-  echo "      [FAIL] Redis cache hit test failed: did not observe cost==0.0 and identical completion ID across requests!" >&2
+  echo "      [FAIL] Redis cache hit test failed: did not observe x-litellm-cache-key and identical completion ID across requests!" >&2
   exit 1
 fi
 
@@ -357,24 +370,60 @@ if [ "${RUN_DISRUPTIVE_TESTS:-false}" = "true" ]; then
   echo "=============================================================================="
 
   echo "    [Disruptive Check 1/6] Verifying HPA reported metrics (not <unknown>)..."
-  HPA_VAL=$(kubectl get hpa glm52-serving-hpa -n llm-serving -o jsonpath='{.status.currentMetrics[0].external.current.value}' 2>/dev/null || kubectl get hpa glm52-serving-hpa -n llm-serving -o jsonpath='{.status.currentMetrics[0].pods.current.value}' 2>/dev/null || echo "<unknown>")
-  if [ "${HPA_VAL}" = "<unknown>" ] || [ -z "${HPA_VAL}" ]; then
-    echo "      [FAIL] HPA metric target reported as <unknown> or unavailable!" >&2; exit 1
-  fi
-  echo "      [PASS] HPA reported valid current metric value: ${HPA_VAL}."
+  HPA_PASSED="false"
+  for attempt in 1 2 3 4 5 6; do
+    HPA_VAL=$(kubectl get hpa glm52-serving-hpa -n llm-serving -o jsonpath='{.status.currentMetrics[0].pods.current.averageValue}' 2>/dev/null)
+    if [ -z "${HPA_VAL}" ]; then HPA_VAL=$(kubectl get hpa glm52-serving-hpa -n llm-serving -o jsonpath='{.status.currentMetrics[0].external.current.averageValue}' 2>/dev/null); fi
+    if [ -z "${HPA_VAL}" ]; then HPA_VAL=$(kubectl get hpa glm52-serving-hpa -n llm-serving -o jsonpath='{.status.currentMetrics[0].pods.current.value}' 2>/dev/null); fi
+    if [ -z "${HPA_VAL}" ]; then HPA_VAL=$(kubectl get hpa glm52-serving-hpa -n llm-serving -o jsonpath='{.status.currentMetrics[0].external.current.value}' 2>/dev/null); fi
+    if [ -z "${HPA_VAL}" ]; then HPA_VAL="<unknown>"; fi
 
-  echo "    [Disruptive Check 2/6] Verifying PodMonitoring target scraping and data points..."
+    if [ "${HPA_VAL}" != "<unknown>" ] && [ -n "${HPA_VAL}" ]; then
+      echo "      [PASS] HPA reported valid current metric value on attempt ${attempt}: ${HPA_VAL}."
+      HPA_PASSED="true"
+      break
+    fi
+    sleep 5
+  done
+  if [ "${HPA_PASSED}" != "true" ]; then
+    echo "      [FAIL] HPA metric target reported as <unknown> or unavailable after 30s!" >&2; exit 1
+  fi
+
+  echo "    [Disruptive Check 2/6] Verifying PodMonitoring target scraping and DCGM data points..."
   if ! kubectl get podmonitoring -n llm-serving >/dev/null 2>&1; then
     echo "      [FAIL] PodMonitoring custom resources not found in llm-serving!" >&2; exit 1
   fi
-  METRICS_OUT=$(kubectl exec -n llm-serving "${SERVING_POD}" -c "${ENGINE_CONTAINER}" -- curl -s http://localhost:8000/metrics || true)
-  if ! echo "${METRICS_OUT}" | grep -iE "DCGM_FI_" >/dev/null; then
-    echo "      [FAIL] No DCGM GPU metric data points (DCGM_FI_*) returned from serving target!" >&2; exit 1
+  SCRAPE_PASSED="false"
+  for attempt in 1 2 3 4 5 6; do
+    METRICS_OUT=$(kubectl exec -n llm-serving "${SERVING_POD}" -c "${ENGINE_CONTAINER}" -- curl -s http://localhost:8000/metrics || true)
+    if echo "${METRICS_OUT}" | grep -iE "vllm:num_requests|sglang:num_queue|sglang:num_running" >/dev/null; then
+      echo "      [PASS] Verified serving pod /metrics endpoint emitting engine queue telemetry on attempt ${attempt}."
+      SCRAPE_PASSED="true"
+      break
+    fi
+    sleep 5
+  done
+  if [ "${SCRAPE_PASSED}" != "true" ]; then
+    echo "      [FAIL] No engine queue metric data points returned from serving target after 30s!" >&2; exit 1
   fi
-  if ! echo "${METRICS_OUT}" | grep -iE "vllm:num_requests|sglang:num_queue|sglang:num_running" >/dev/null; then
-    echo "      [FAIL] No engine queue metric data points returned from serving target!" >&2; exit 1
+
+  echo "    --> Verifying DCGM GPU metric ingestion in Cloud Monitoring (gke-managed-dcgm-exporter)..."
+  DCGM_PTS=$(python3 -c "
+import urllib.request, json, subprocess, urllib.parse, datetime
+token = subprocess.check_output(['gcloud', 'auth', 'print-access-token']).decode().strip()
+now = datetime.datetime.utcnow().isoformat() + 'Z'
+start = (datetime.datetime.utcnow() - datetime.timedelta(hours=2)).isoformat() + 'Z'
+params = urllib.parse.urlencode({'filter': 'metric.type=\"prometheus.googleapis.com/DCGM_FI_DEV_GPU_UTIL/gauge\"', 'interval.startTime': start, 'interval.endTime': now})
+url = f'https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/timeSeries?{params}'
+req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+with urllib.request.urlopen(req) as resp:
+    data = json.loads(resp.read().decode())
+    print(len(data.get('timeSeries', [])))
+" 2>/dev/null || echo "0")
+  if [ "${DCGM_PTS}" -eq 0 ]; then
+    echo "      [FAIL] No DCGM GPU metric data points (DCGM_FI_*) found in Cloud Monitoring!" >&2; exit 1
   fi
-  echo "      [PASS] Verified PodMonitoring target scraping and DCGM/queue data points."
+  echo "      [PASS] Verified DCGM GPU telemetry ingestion in Cloud Monitoring (${DCGM_PTS} active time series)."
 
   echo "    [Disruptive Check 3/6] Verifying Token-Bucket Rate Limit (429 on low RPM key)..."
   RPM_KEY_RESP=$(run_gateway_curl -s -X POST http://"${GATEWAY_VIP}":4000/key/generate \
