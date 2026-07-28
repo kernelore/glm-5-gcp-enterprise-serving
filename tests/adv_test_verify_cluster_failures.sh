@@ -6,6 +6,9 @@ MOCK_DIR=$(mktemp -d)
 export MOCK_DIR
 cleanup_mocks() {
   rm -rf "${MOCK_DIR}"
+  if [ -f "${SCRIPT_DIR}/check_bq.py.tmp" ]; then
+    mv "${SCRIPT_DIR}/check_bq.py.tmp" "${SCRIPT_DIR}/check_bq.py" 2>/dev/null || true
+  fi
   if [ "${CREATED_MOCK_CONFIG:-false}" = "true" ]; then
     rm -f "${SCRIPT_DIR}/config.env"
   fi
@@ -22,7 +25,7 @@ echo "==========================================================================
 
   setup_healthy_mocks() {
   rm -f "${MOCK_DIR}"/*
-  if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
+  if [ ! -f "${SCRIPT_DIR}/config.env" ] || grep -q "YOUR_PROJECT_ID" "${SCRIPT_DIR}/config.env"; then
     sed 's/YOUR_PROJECT_ID/mock-test-project/g' "${SCRIPT_DIR}/config.env.example" > "${SCRIPT_DIR}/config.env"
     export CREATED_MOCK_CONFIG="true"
   fi
@@ -165,11 +168,15 @@ echo "--> Failure State 2: Proving missing check_bq.py exits non-zero..."
 setup_healthy_mocks
 mv "${SCRIPT_DIR}/check_bq.py" "${SCRIPT_DIR}/check_bq.py.tmp"
 if bash "${SCRIPT_DIR}/04_verify_cluster.sh" >/dev/null 2>&1; then
-  mv "${SCRIPT_DIR}/check_bq.py.tmp" "${SCRIPT_DIR}/check_bq.py"
+  if [ -f "${SCRIPT_DIR}/check_bq.py.tmp" ]; then
+    mv "${SCRIPT_DIR}/check_bq.py.tmp" "${SCRIPT_DIR}/check_bq.py"
+  fi
   echo "ERROR: 04_verify_cluster.sh failed to exit non-zero when check_bq.py was missing!" >&2
   exit 1
 fi
-mv "${SCRIPT_DIR}/check_bq.py.tmp" "${SCRIPT_DIR}/check_bq.py"
+if [ -f "${SCRIPT_DIR}/check_bq.py.tmp" ]; then
+  mv "${SCRIPT_DIR}/check_bq.py.tmp" "${SCRIPT_DIR}/check_bq.py"
+fi
 echo "    [OK] Failure State 2 verified: Missing check_bq.py caused script to exit 1."
 
 echo "--> Failure State 3: Proving missing gateway pod exits non-zero..."
@@ -184,6 +191,7 @@ echo "    [OK] Failure State 3 verified: Missing gateway pod caused script to ex
 echo "--> Failure State 4: Proving empty BigQuery table (total_rows == 0) exits non-zero in check_bq.py and verify script..."
 setup_healthy_mocks
 export MOCK_BQ_EMPTY="true"
+export BQ_TIMEOUT="1"
 if python3 "${SCRIPT_DIR}/check_bq.py" >/dev/null 2>&1; then
   echo "ERROR: check_bq.py failed to exit non-zero when BigQuery table was empty (total_rows == 0)!" >&2
   exit 1

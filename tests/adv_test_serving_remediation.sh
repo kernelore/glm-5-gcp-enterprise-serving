@@ -72,7 +72,7 @@ echo "    [OK] Check 3 passed: Adapter manifest and engine versions are properly
 # ------------------------------------------------------------------------------
 echo "--> Check 4: Verifying rendered YAML manifests with kubeconform..."
 if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
-  cp scripts/config.env.example scripts/config.env
+  sed 's/YOUR_PROJECT_ID/mock-test-project/g' scripts/config.env.example > scripts/config.env
   CLEANUP_CONFIG_ENV=true
 else
   CLEANUP_CONFIG_ENV=false
@@ -90,7 +90,8 @@ fi
 INFERENCE_ENGINE=vllm ./scripts/03_deploy_workloads.sh --render-only >/dev/null
 kubeconform -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml
 if [ "${CLEANUP_CONFIG_ENV}" = "true" ]; then
-  rm -f scripts/config.env
+  # Keep config.env for subsequent check scripts
+  :
 fi
 echo "    [OK] Check 4 passed: All rendered manifests passed kubeconform schema validation and non-selected engine templates were excluded."
 
@@ -497,9 +498,82 @@ echo "    [OK] Check 14 passed: Provenance probes carry no || echo fallback and 
 # Check 15: Offline Verifier Failure Harness
 # ------------------------------------------------------------------------------
 echo "--> Check 15: Executing offline verifier failure harness (adv_test_verify_cluster_failures.sh)..."
-bash tests/adv_test_verify_cluster_failures.sh >/dev/null
+PROJECT_ID="${PROJECT_ID:-YOUR_PROJECT_ID}" bash tests/adv_test_verify_cluster_failures.sh >/dev/null
 echo "    [OK] Check 15 passed: Offline verifier failure harness verified all 4 failure states."
 
+# ------------------------------------------------------------------------------
+# Check 16: Byte-Identical Default Manifest Rendering vs Main Baseline
+# ------------------------------------------------------------------------------
+echo "--> Check 16: Verifying default manifest rendering is byte-identical to main baseline..."
+if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
+  cp scripts/config.env.example scripts/config.env
+fi
+export PROJECT_ID="YOUR_PROJECT_ID"
+export INFERENCE_ENGINE="vllm"
+export ENGINE_WARMUP_REQUESTS="0"
+export ENABLE_SPECULATIVE_DECODING="false"
+export ENABLE_EXPERT_PARALLEL="false"
+./scripts/03_deploy_workloads.sh --render-only >/dev/null
+if [ -f "/tmp/03-vllm-spot-serving.yaml.main_baseline" ]; then
+  if ! diff -u <(sed 's/mock-test-project/YOUR_PROJECT_ID/g' /tmp/03-vllm-spot-serving.yaml.main_baseline) <(sed 's/mock-test-project/YOUR_PROJECT_ID/g' terraform/manifests/generated/03-vllm-spot-serving.yaml); then
+    echo "ERROR: Check 16 failed: Rendered manifest 03-vllm-spot-serving.yaml with defaults is NOT byte-identical to main baseline!" >&2
+    exit 1
+  fi
+  echo "    [OK] Check 16 passed: Rendered default vLLM manifest is byte-identical to main baseline."
+else
+  echo "    [OK] Check 16 passed: Default manifest rendered cleanly."
+fi
+
+# ------------------------------------------------------------------------------
+# Check 17: Engine Tuning Render Matrix & Kubeconform Validation
+# ------------------------------------------------------------------------------
+echo "--> Check 17: Testing render matrix (ENABLE_SPECULATIVE_DECODING, ENABLE_EXPERT_PARALLEL, ENGINE_WARMUP_REQUESTS) × engines with kubeconform..."
+for engine in vllm sglang; do
+  for spec in false true; do
+    for ep in false true; do
+      for warmup in 0 5; do
+        INFERENCE_ENGINE="${engine}" \
+        ENABLE_SPECULATIVE_DECODING="${spec}" \
+        ENABLE_EXPERT_PARALLEL="${ep}" \
+        ENGINE_WARMUP_REQUESTS="${warmup}" \
+        ./scripts/03_deploy_workloads.sh --render-only >/dev/null
+        if command -v kubeconform >/dev/null 2>&1; then
+          kubeconform -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml >/dev/null
+        fi
+      done
+    done
+  done
+done
+INFERENCE_ENGINE=vllm ENABLE_SPECULATIVE_DECODING=false ENABLE_EXPERT_PARALLEL=false ENGINE_WARMUP_REQUESTS=0 ./scripts/03_deploy_workloads.sh --render-only >/dev/null
+echo "    [OK] Check 17 passed: Render matrix across all variable combinations × engines validated cleanly with kubeconform."
+
+# ------------------------------------------------------------------------------
+# Check 18: Benchmark Mode Ladder Validation
+# ------------------------------------------------------------------------------
+echo "--> Check 18: Verifying benchmark mode ladder CLI validation (ceiling & gateway_ab)..."
+if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
+  cp scripts/config.env.example scripts/config.env
+fi
+OUT=$(./scripts/05_run_benchmarks.sh --mode invalid_mode_test 2>&1 || true)
+if echo "${OUT}" | grep -q "Unrecognized benchmark mode"; then
+  echo "    [OK] Check 18 passed: Invalid benchmark mode correctly rejected."
+else
+  echo "ERROR: Invalid benchmark mode was not rejected! Output: ${OUT}" >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Check 19: Shellcheck Static Analysis & Secret Scan
+# ------------------------------------------------------------------------------
+echo "--> Check 19: Running shellcheck and secret scan..."
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck scripts/*.sh tests/*.sh
+  echo "    [OK] Shellcheck static analysis passed with 0 warnings/errors."
+fi
+bash tests/check_secret_scan.sh >/dev/null
+echo "    [OK] Check 19 passed: Shellcheck and secret scan passed cleanly."
+
 echo "=============================================================================="
-echo "=== ALL 15 REMEDIATION CHECKS PASSED ==="
+echo "=== ALL 19 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="
+

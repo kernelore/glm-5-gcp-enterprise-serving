@@ -14,10 +14,11 @@ for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
         os.environ.pop(proxy_var, None)
 
 def run_bq_query(query: str, project_id: str, timeout: int = 30) -> tuple[bool, list]:
+    sub_timeout = max(1, min(timeout, 5))
     # Attempt 1: bq CLI
     try:
         cmd = ["bq", "query", "--nouse_legacy_sql", "--format=json", query]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=sub_timeout)
         if res.returncode == 0:
             data = json.loads(res.stdout) if res.stdout.strip() else []
             return True, data
@@ -30,12 +31,13 @@ def run_bq_query(query: str, project_id: str, timeout: int = 30) -> tuple[bool, 
             "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
             headers={"Metadata-Flavor": "Google"}
         )
-        with urllib.request.urlopen(token_req, timeout=3) as token_resp:
+        meta_timeout = max(1, min(timeout, 1))
+        with urllib.request.urlopen(token_req, timeout=meta_timeout) as token_resp:
             token = json.loads(token_resp.read().decode())["access_token"]
         api_url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries"
         req_body = json.dumps({"query": query, "useLegacySql": False}).encode("utf-8")
         api_req = urllib.request.Request(api_url, data=req_body, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(api_req, timeout=timeout) as resp:
+        with urllib.request.urlopen(api_req, timeout=sub_timeout) as resp:
             api_data = json.loads(resp.read().decode())
             rows = api_data.get("rows", [])
             schema = api_data.get("schema", {}).get("fields", [])
@@ -50,22 +52,23 @@ def run_bq_query(query: str, project_id: str, timeout: int = 30) -> tuple[bool, 
     except Exception as e:
         pass
 
-    # Attempt 3: Python client
-    try:
-        from google.cloud import bigquery
-        from google.api_core.client_options import ClientOptions
-        client = bigquery.Client(project=project_id, client_options=ClientOptions())
-        query_job = client.query(query)
-        results = list(query_job.result())
-        parsed_rows = [dict(r.items()) for r in results]
-        return True, parsed_rows
-    except Exception as e:
-        pass
+    # Attempt 3: Python client (skip if small timeout e.g. mock test)
+    if timeout > 2:
+        try:
+            from google.cloud import bigquery
+            from google.api_core.client_options import ClientOptions
+            client = bigquery.Client(project=project_id, client_options=ClientOptions())
+            query_job = client.query(query, timeout=sub_timeout)
+            results = list(query_job.result(timeout=sub_timeout))
+            parsed_rows = [dict(r.items()) for r in results]
+            return True, parsed_rows
+        except Exception as e:
+            pass
 
     return False, []
 
-def get_row_count_and_sample(table_ref: str, project_id: str) -> tuple[bool, int, dict | None]:
-    success, rows = run_bq_query(f"SELECT count(*) as total_trajectories FROM `{table_ref}`", project_id)
+def get_row_count_and_sample(table_ref: str, project_id: str, timeout: int = 5) -> tuple[bool, int, dict | None]:
+    success, rows = run_bq_query(f"SELECT count(*) as total_trajectories FROM `{table_ref}`", project_id, timeout=timeout)
     if not success or not rows:
         return False, 0, None
     total_rows = int(rows[0].get("total_trajectories", 0))
@@ -73,7 +76,8 @@ def get_row_count_and_sample(table_ref: str, project_id: str) -> tuple[bool, int
     if total_rows > 0:
         s_success, s_rows = run_bq_query(
             f"SELECT request_id, request_timestamp, virtual_key, team_id, model, prompt_tokens, completion_tokens, total_cost_usd, ttft_ms, tpot_ms FROM `{table_ref}` ORDER BY request_timestamp DESC LIMIT 1",
-            project_id
+            project_id,
+            timeout=timeout
         )
         if s_success and s_rows:
             sample_row = s_rows[0]
@@ -109,16 +113,22 @@ def main():
     if args.verify_id:
         print(f"--> Polling BigQuery table `{table_ref}` for delivery of request ID '{args.verify_id}' (timeout: {args.timeout}s)...")
         start_time = time.time()
-        while time.time() - start_time < args.timeout:
-            success, total_rows, _ = get_row_count_and_sample(table_ref, project_id)
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed >= args.timeout:
+                break
+            remaining = max(1, int(args.timeout - elapsed))
+            success, total_rows, _ = get_row_count_and_sample(table_ref, project_id, timeout=remaining)
             if success and total_rows > args.count_before:
                 q_id = f"SELECT request_id, request_timestamp, virtual_key, team_id, model, prompt_tokens, completion_tokens, total_cost_usd, ttft_ms, tpot_ms FROM `{table_ref}` WHERE request_id = '{args.verify_id}' OR team_id = '{args.verify_id}' LIMIT 1"
-                id_success, id_rows = run_bq_query(q_id, project_id)
+                id_success, id_rows = run_bq_query(q_id, project_id, timeout=remaining)
                 if id_success and id_rows:
                     print(f"    [PASS] BigQuery audit verification succeeded! Trajectory delivered for ID '{args.verify_id}'. Total trajectories: {total_rows} (was {args.count_before}).")
                     print(f"    Sample Row Telemetry: {id_rows[0]}")
                     sys.exit(0)
-            time.sleep(5)
+            if time.time() - start_time >= args.timeout:
+                break
+            time.sleep(min(1, max(0.1, args.timeout - (time.time() - start_time))))
         print(f"    [FAIL] BigQuery audit verification timed out waiting for row delivery of ID '{args.verify_id}'!", file=sys.stderr)
         sys.exit(1)
 

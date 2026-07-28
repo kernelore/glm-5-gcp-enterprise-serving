@@ -85,9 +85,13 @@ get_gcloud_val() {
   fi
 }
 
-REDIS_PASSWORD=$(get_tf_output redis_auth_string)
-if [ -z "${REDIS_PASSWORD}" ]; then
-  REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string glm52-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
+if [ -z "${REDIS_PASSWORD:-}" ]; then
+  if [ "${1:-}" != "--render-only" ] && [ "${2:-}" != "--render-only" ]; then
+    REDIS_PASSWORD=$(get_tf_output redis_auth_string)
+    if [ -z "${REDIS_PASSWORD}" ]; then
+      REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string glm52-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
+    fi
+  fi
 fi
 REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
 export REDIS_PASSWORD
@@ -96,16 +100,24 @@ REDIS_PASSWORD_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.pars
 export REDIS_PASSWORD_ENCODED
 
 # Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
-REDIS_HOST=$(get_tf_output redis_host)
-if [ -z "${REDIS_HOST}" ]; then
-  REDIS_HOST=$(get_gcloud_val redis instances describe glm52-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
+if [ -z "${REDIS_HOST:-}" ]; then
+  if [ "${1:-}" != "--render-only" ] && [ "${2:-}" != "--render-only" ]; then
+    REDIS_HOST=$(get_tf_output redis_host)
+    if [ -z "${REDIS_HOST}" ]; then
+      REDIS_HOST=$(get_gcloud_val redis instances describe glm52-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
+    fi
+  fi
 fi
 REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
 export REDIS_HOST
 
-DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
-if [ -z "${DB_CONNECTION_NAME}" ]; then
-  DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe glm52-gateway-db --format="value(connectionName)" --quiet)
+if [ -z "${DB_CONNECTION_NAME:-}" ]; then
+  if [ "${1:-}" != "--render-only" ] && [ "${2:-}" != "--render-only" ]; then
+    DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
+    if [ -z "${DB_CONNECTION_NAME}" ]; then
+      DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe glm52-gateway-db --format="value(connectionName)" --quiet)
+    fi
+  fi
 fi
 DB_CONNECTION_NAME="${DB_CONNECTION_NAME:-${PROJECT_ID}:${REGION}:glm52-gateway-db}"
 export DB_CONNECTION_NAME
@@ -137,8 +149,100 @@ export BENCHMARK_REQUESTS="${BENCHMARK_REQUESTS:-16}"
 export BENCHMARK_DURATION="${BENCHMARK_DURATION:-600}"
 export BENCHMARK_METADATA="${BENCHMARK_METADATA:-{\}}"
 
+# Engine tuning & performance variables
+export ENGINE_WARMUP_REQUESTS="${ENGINE_WARMUP_REQUESTS:-0}"
+export ENABLE_SPECULATIVE_DECODING="${ENABLE_SPECULATIVE_DECODING:-false}"
+export ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-false}"
+export MAX_RUNNING_REQUESTS="${MAX_RUNNING_REQUESTS:-64}"
+export MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
+export MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
+
+if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
+  if [ -z "${MEM_FRACTION_STATIC:-}" ] || [ "${MEM_FRACTION_STATIC}" = "0.94" ]; then
+    export MEM_FRACTION_STATIC="0.90"
+  else
+    export MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC}"
+  fi
+else
+  export MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.94}"
+fi
+
+# shellcheck disable=SC2089,SC2090
+VLLM_EXTRA_FLAGS=""
+if [ "${ENABLE_SPECULATIVE_DECODING}" = "true" ] || [ "${ENABLE_SPECULATIVE_DECODING}" = "1" ]; then
+  # shellcheck disable=SC2089,SC2090
+  VLLM_EXTRA_FLAGS="${VLLM_EXTRA_FLAGS} \\
+              --speculative-config '{\"method\": \"mtp\", \"num_speculative_tokens\": 2}'"
+fi
+if [ "${ENABLE_EXPERT_PARALLEL}" = "true" ] || [ "${ENABLE_EXPERT_PARALLEL}" = "1" ]; then
+  # shellcheck disable=SC2089,SC2090
+  VLLM_EXTRA_FLAGS="${VLLM_EXTRA_FLAGS} \\
+              --enable-expert-parallel"
+fi
+# shellcheck disable=SC2089,SC2090
+export VLLM_EXTRA_FLAGS
+
+# shellcheck disable=SC2089,SC2090
+SGLANG_EXTRA_FLAGS=""
+if [ "${ENABLE_SPECULATIVE_DECODING}" = "true" ] || [ "${ENABLE_SPECULATIVE_DECODING}" = "1" ]; then
+  # shellcheck disable=SC2089,SC2090
+  SGLANG_EXTRA_FLAGS="${SGLANG_EXTRA_FLAGS} \\
+              --speculative-algorithm EAGLE \\
+              --speculative-num-steps 2 \\
+              --speculative-eagle-topk 1 \\
+              --speculative-num-draft-tokens 3"
+fi
+if [ "${ENABLE_EXPERT_PARALLEL}" = "true" ] || [ "${ENABLE_EXPERT_PARALLEL}" = "1" ]; then
+  # shellcheck disable=SC2089,SC2090
+  SGLANG_EXTRA_FLAGS="${SGLANG_EXTRA_FLAGS} \\
+              --enable-dp-attention"
+fi
+# shellcheck disable=SC2089,SC2090
+export SGLANG_EXTRA_FLAGS
+
+if [ "${ENGINE_WARMUP_REQUESTS}" -gt 0 ] 2>/dev/null; then
+  WARMUP_BLOCK="
+          rm -f /tmp/engine_warmed_up
+          (
+            echo \"Starting deploy-time warmup loop (${ENGINE_WARMUP_REQUESTS} requests)...\"
+            until curl -s -f http://localhost:8000/health >/dev/null 2>&1; do
+              sleep 2
+            done
+            for ((i=1; i<=${ENGINE_WARMUP_REQUESTS}; i++)); do
+              curl -s -X POST http://localhost:8000/v1/chat/completions \\
+                -H \"Content-Type: application/json\" \\
+                -d '{\"model\":\"glm-5.2-moe\",\"messages\":[{\"role\":\"user\",\"content\":\"Warmup request\"}],\"max_tokens\":16}' >/dev/null 2>&1 || true
+            done
+            echo \"Warmup complete. Creating readiness marker /tmp/engine_warmed_up.\"
+            touch /tmp/engine_warmed_up
+          ) &"
+  READINESS_PROBE_BLOCK="        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - test -f /tmp/engine_warmed_up && curl -s -f http://localhost:8000/health >/dev/null
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 30"
+else
+  WARMUP_BLOCK=""
+  READINESS_PROBE_BLOCK="        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 30"
+fi
+export WARMUP_BLOCK
+export READINESS_PROBE_BLOCK
+
 # 1. Render manifest templates (excluding HF_TOKEN from substitution to prevent plaintext baking)
 echo "--> 1. Rendering manifest templates from ${TEMPLATE_DIR} to ${GENERATED_DIR}..."
+rm -f "${GENERATED_DIR}"/03-*-spot-serving.yaml
 for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
   if [ -f "${template_file}" ]; then
     basename=$(basename "${template_file}" .template)
@@ -152,7 +256,7 @@ for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
     target_file="${GENERATED_DIR}/${basename}"
     echo "    Rendering ${basename}..."
     # shellcheck disable=SC2016
-    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${HPA_QUEUE_METRIC} ${HPA_RUNNING_METRIC} ${SERVING_IMAGE} ${WEIGHTS_DOWNLOADER_IMAGE} ${SERVING_VIP} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA}' < "${template_file}" > "${target_file}"
+    safe_envsubst '${PROJECT_ID} ${REGION} ${ZONE} ${CLUSTER_NAME} ${OWNER_LABEL} ${TTL_LABEL} ${ENV_LABEL} ${HF_TOKEN_BASE64} ${MODEL_REPO_ID} ${GCS_WEIGHTS_BUCKET} ${GATEWAY_MASTER_KEY} ${DB_CONNECTION_NAME} ${DB_PASSWORD} ${REDIS_HOST} ${REDIS_PASSWORD} ${REDIS_PASSWORD_ENCODED} ${VLLM_VIP} ${GPU_MAX_NODES} ${INFERENCE_ENGINE} ${INFERENCE_SERVER_LABEL} ${HPA_QUEUE_METRIC} ${HPA_RUNNING_METRIC} ${SERVING_IMAGE} ${WEIGHTS_DOWNLOADER_IMAGE} ${SERVING_VIP} ${BENCHMARK_MODE} ${BENCHMARK_CONCURRENCY} ${BENCHMARK_REQUESTS} ${BENCHMARK_DURATION} ${BENCHMARK_METADATA} ${MAX_NUM_SEQS} ${MAX_NUM_BATCHED_TOKENS} ${MAX_RUNNING_REQUESTS} ${MEM_FRACTION_STATIC} ${VLLM_EXTRA_FLAGS} ${SGLANG_EXTRA_FLAGS} ${WARMUP_BLOCK} ${READINESS_PROBE_BLOCK}' < "${template_file}" > "${target_file}"
   fi
 done
 echo "    [OK] All manifest templates rendered cleanly."

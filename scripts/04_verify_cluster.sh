@@ -359,7 +359,7 @@ fi
 if ! GOOGLE_API_USE_CLIENT_CERTIFICATE=false python3 "${SCRIPT_DIR}/check_bq.py" \
   --verify-id "${BQ_TEST_ID}" \
   --count-before "${COUNT_BEFORE}" \
-  --timeout 180; then
+  --timeout "${BQ_TIMEOUT:-180}"; then
   echo "      [FAIL] BigQuery audit trajectory verification failed!" >&2
   exit 1
 fi
