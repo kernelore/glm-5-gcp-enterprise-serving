@@ -154,17 +154,21 @@ All benchmarks were executed on the live GKE serving cluster with identical hard
 | $c=32$ | 2190.03 | 2392.34 | **+9.24%** | 1.0121 s | 0.9998 s | **+1.22%** |
 | $c=64$ | 3451.79 | 3103.38 | **-10.09%** | 1.8057 s | 17.6884 s | **-879.58%** |
 
+Aggregate throughput in this deployment is bounded by design — --max-num-seqs=64 / --max-running-requests=64 cap concurrent sequences to bound tail latency — so these figures measure a latency-bounded interactive configuration and are not comparable to unbounded-batching throughput benchmarks (e.g., MLPerf offline scenarios).
+
 #### Table 3: Prompt Prefill Ingestion Stress ($5,313\text{ prompt tok} \to 16\text{ out}$)
 | Metric | vLLM (0.26.0) | SGLang (0.5.16) | Delta ($\Delta$) |
 | :--- | :--- | :--- | :--- |
 | Prefill throughput | 1878.52 prompt tok/s | 587.51 prompt tok/s | **-68.72%** |
 | TTFT mean (ms) | 2828.29 ms | 9043.23 ms | **-219.74%** |
 
+These are first-request measurements against a freshly started engine and represent a per-deployment cold-start cost (JIT/CUDA-graph compilation, memory-pool allocation), not per-request serving latency.
+
 #### Technical Guidance: When to Choose vLLM vs SGLang
 
 * **Both engines are production-viable on this stack; across our serving workload suites (Standard, Massive, Soak), both engines demonstrate robust, sustained serving stability and throughput. In first-request cold prefill ingestion, vLLM demonstrates a 3.2× latency advantage (2,828 ms mean TTFT vs SGLang 9,043 ms) due to differences in initial JIT/CUDA-graph compilation and memory pool allocation.**
 * **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of 8.80 ms vs vLLM 10.52 ms) and sustained stability during 30-minute endurance soak testing.
-* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving where mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes are prioritized.
+* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving where mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes are prioritized. At the configured concurrency ceiling (c=64, equal to the engines' running-request cap), SGLang's P99 TTFT degraded to 17.69 s versus vLLM's 1.81 s — operators planning sustained loads at or near the cap should prefer vLLM or raise SGLang's limits and re-validate.
 
 <!-- ENGINE_COMPARISON_END -->
 

@@ -412,6 +412,9 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
         lines.append(f"| $c={c}$ | {v_tok:.2f} | {g_tok:.2f} | **{d_tok}** | {v_ttft_s:.4f} s | {g_ttft_s:.4f} s | **{d_ttft}** |")
 
     lines.append("")
+    lines.append("Aggregate throughput in this deployment is bounded by design — --max-num-seqs=64 / --max-running-requests=64 cap concurrent sequences to bound tail latency — so these figures measure a latency-bounded interactive configuration and are not comparable to unbounded-batching throughput benchmarks (e.g., MLPerf offline scenarios).")
+
+    lines.append("")
     prefill_tok = get_req_cfg_val(vllm["prefill"], "prefill", None, "prompt_tokens")
     lines.append(f"#### Table 3: Prompt Prefill Ingestion Stress (${prefill_tok:,}\\text{{ prompt tok}} \\to 16\\text{{ out}}$)")
     lines.append(f"| Metric | {v_label} | {g_label} | Delta ($\\Delta$) |")
@@ -424,6 +427,8 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
 
     lines.append(f"| Prefill throughput | {vp_tok:.2f} prompt tok/s | {gp_tok:.2f} prompt tok/s | **{d_prefill_tok}** |")
     lines.append(f"| TTFT mean (ms) | {vp_ttft:.2f} ms | {gp_ttft:.2f} ms | **{d_prefill_ttft}** |")
+    lines.append("")
+    lines.append("These are first-request measurements against a freshly started engine and represent a per-deployment cold-start cost (JIT/CUDA-graph compilation, memory-pool allocation), not per-request serving latency.")
     
     lines.append("")
     lines.append("#### Technical Guidance: When to Choose vLLM vs SGLang")
@@ -437,7 +442,7 @@ def generate_markdown(vllm: dict, sglang: dict) -> str:
     
     lines.append("* **Both engines are production-viable on this stack; across our serving workload suites (Standard, Massive, Soak), both engines demonstrate robust, sustained serving stability and throughput. In first-request cold prefill ingestion, vLLM demonstrates a 3.2× latency advantage (2,828 ms mean TTFT vs SGLang 9,043 ms) due to differences in initial JIT/CUDA-graph compilation and memory pool allocation.**")
     lines.append(f"* **Choose SGLang (`INFERENCE_ENGINE=sglang`)** when your application relies heavily on RadixAttention prefix caching, structured JSON generation, or multi-turn conversational agents. In our production suites, SGLang demonstrated robust decoding performance (Standard TPOT of {sglang_std_tpot:.2f} ms vs vLLM {vllm_std_tpot:.2f} ms) and sustained stability during 30-minute endurance soak testing.")
-    lines.append("* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving where mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes are prioritized.")
+    lines.append("* **Choose vLLM (`INFERENCE_ENGINE=vllm`)** as the robust default for general-purpose serving where mature CUDA graph capture, predictable memory allocation, and consistent latency across diverse batch sizes are prioritized. At the configured concurrency ceiling (c=64, equal to the engines' running-request cap), SGLang's P99 TTFT degraded to 17.69 s versus vLLM's 1.81 s — operators planning sustained loads at or near the cap should prefer vLLM or raise SGLang's limits and re-validate.")
     
     return "\n".join(lines)
 
