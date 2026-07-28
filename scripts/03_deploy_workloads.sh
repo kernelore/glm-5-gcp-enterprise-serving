@@ -85,8 +85,15 @@ get_gcloud_val() {
   fi
 }
 
+RENDER_ONLY=false
+for arg in "$@"; do
+  if [ "${arg}" = "--render-only" ]; then
+    RENDER_ONLY=true
+  fi
+done
+
 if [ -z "${REDIS_PASSWORD:-}" ]; then
-  if [ "${1:-}" != "--render-only" ] && [ "${2:-}" != "--render-only" ]; then
+  if [ "${RENDER_ONLY}" = "false" ]; then
     REDIS_PASSWORD=$(get_tf_output redis_auth_string)
     if [ -z "${REDIS_PASSWORD}" ]; then
       REDIS_PASSWORD=$(get_gcloud_val redis instances get-auth-string glm52-gateway-cache --region="${REGION}" --format="value(authString)" --quiet)
@@ -101,7 +108,7 @@ export REDIS_PASSWORD_ENCODED
 
 # Extract Redis and Cloud SQL details from Terraform (or gcloud fallback)
 if [ -z "${REDIS_HOST:-}" ]; then
-  if [ "${1:-}" != "--render-only" ] && [ "${2:-}" != "--render-only" ]; then
+  if [ "${RENDER_ONLY}" = "false" ]; then
     REDIS_HOST=$(get_tf_output redis_host)
     if [ -z "${REDIS_HOST}" ]; then
       REDIS_HOST=$(get_gcloud_val redis instances describe glm52-gateway-cache --region="${REGION}" --format="value(host)" --quiet)
@@ -112,7 +119,7 @@ REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
 export REDIS_HOST
 
 if [ -z "${DB_CONNECTION_NAME:-}" ]; then
-  if [ "${1:-}" != "--render-only" ] && [ "${2:-}" != "--render-only" ]; then
+  if [ "${RENDER_ONLY}" = "false" ]; then
     DB_CONNECTION_NAME=$(get_tf_output db_instance_connection_name)
     if [ -z "${DB_CONNECTION_NAME}" ]; then
       DB_CONNECTION_NAME=$(get_gcloud_val sql instances describe glm52-gateway-db --format="value(connectionName)" --quiet)
@@ -153,23 +160,26 @@ export BENCHMARK_METADATA="${BENCHMARK_METADATA:-{\}}"
 export ENGINE_WARMUP_REQUESTS="${ENGINE_WARMUP_REQUESTS:-0}"
 export ENABLE_SPECULATIVE_DECODING="${ENABLE_SPECULATIVE_DECODING:-false}"
 export ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-false}"
+export EXPERT_PARALLEL_SIZE="${EXPERT_PARALLEL_SIZE:-8}"
 export MAX_RUNNING_REQUESTS="${MAX_RUNNING_REQUESTS:-64}"
 export MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 export MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
 
-if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
-  if [ -z "${MEM_FRACTION_STATIC:-}" ] || [ "${MEM_FRACTION_STATIC}" = "0.94" ]; then
+if [ -z "${MEM_FRACTION_STATIC:-}" ]; then
+  if [ "${INFERENCE_ENGINE}" = "sglang" ]; then
     export MEM_FRACTION_STATIC="0.90"
   else
-    export MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC}"
+    export MEM_FRACTION_STATIC="0.94"
   fi
 else
-  export MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.94}"
+  export MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC}"
 fi
 
 # shellcheck disable=SC2089,SC2090
 VLLM_EXTRA_FLAGS=""
 if [ "${ENABLE_SPECULATIVE_DECODING}" = "true" ] || [ "${ENABLE_SPECULATIVE_DECODING}" = "1" ]; then
+  echo "--> [WARNING] Speculative decoding enabled for vLLM."
+  echo "    Ensure MTP draft weights exist in ${MODEL_REPO_ID} or engine startup may fail."
   # shellcheck disable=SC2089,SC2090
   VLLM_EXTRA_FLAGS="${VLLM_EXTRA_FLAGS} \\
               --speculative-config '{\"method\": \"mtp\", \"num_speculative_tokens\": 2}'"
@@ -185,6 +195,8 @@ export VLLM_EXTRA_FLAGS
 # shellcheck disable=SC2089,SC2090
 SGLANG_EXTRA_FLAGS=""
 if [ "${ENABLE_SPECULATIVE_DECODING}" = "true" ] || [ "${ENABLE_SPECULATIVE_DECODING}" = "1" ]; then
+  echo "--> [WARNING] Speculative decoding enabled for SGLang (EAGLE)."
+  echo "    Ensure EAGLE draft weights exist in ${MODEL_REPO_ID} or engine startup may fail."
   # shellcheck disable=SC2089,SC2090
   SGLANG_EXTRA_FLAGS="${SGLANG_EXTRA_FLAGS} \\
               --speculative-algorithm EAGLE \\
@@ -195,7 +207,7 @@ fi
 if [ "${ENABLE_EXPERT_PARALLEL}" = "true" ] || [ "${ENABLE_EXPERT_PARALLEL}" = "1" ]; then
   # shellcheck disable=SC2089,SC2090
   SGLANG_EXTRA_FLAGS="${SGLANG_EXTRA_FLAGS} \\
-              --enable-dp-attention"
+              --enable-ep --ep-size ${EXPERT_PARALLEL_SIZE:-8}"
 fi
 # shellcheck disable=SC2089,SC2090
 export SGLANG_EXTRA_FLAGS
@@ -208,13 +220,24 @@ if [ "${ENGINE_WARMUP_REQUESTS}" -gt 0 ] 2>/dev/null; then
             until curl -s -f http://localhost:8000/health >/dev/null 2>&1; do
               sleep 2
             done
+            SUCCESS_COUNT=0
             for ((i=1; i<=${ENGINE_WARMUP_REQUESTS}; i++)); do
-              curl -s -X POST http://localhost:8000/v1/chat/completions \\
+              HTTP_CODE=\$(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:8000/v1/chat/completions \\
                 -H \"Content-Type: application/json\" \\
-                -d '{\"model\":\"glm-5.2-moe\",\"messages\":[{\"role\":\"user\",\"content\":\"Warmup request\"}],\"max_tokens\":16}' >/dev/null 2>&1 || true
+                -d '{\"model\":\"glm-5.2-moe\",\"messages\":[{\"role\":\"user\",\"content\":\"Warmup request\"}],\"max_tokens\":16}' 2>/dev/null || echo \"000\")
+              if [ \"\${HTTP_CODE}\" = \"200\" ]; then
+                SUCCESS_COUNT=\$((SUCCESS_COUNT + 1))
+              else
+                echo \"    Warmup request \${i}/${ENGINE_WARMUP_REQUESTS} failed with HTTP code \${HTTP_CODE}.\"
+              fi
             done
-            echo \"Warmup complete. Creating readiness marker /tmp/engine_warmed_up.\"
-            touch /tmp/engine_warmed_up
+            echo \"Warmup complete. Successful requests: \${SUCCESS_COUNT}/${ENGINE_WARMUP_REQUESTS}.\"
+            if [ \"\${SUCCESS_COUNT}\" -ge \"1\" ]; then
+              echo \"Warmup threshold reached (\${SUCCESS_COUNT} successful). Creating readiness marker /tmp/engine_warmed_up.\"
+              touch /tmp/engine_warmed_up
+            else
+              echo \"ERROR: All warmup requests failed (0/${ENGINE_WARMUP_REQUESTS} succeeded). Readiness marker NOT created.\" >&2
+            fi
           ) &"
   READINESS_PROBE_BLOCK="        readinessProbe:
           exec:
@@ -261,7 +284,7 @@ for template_file in "${TEMPLATE_DIR}"/*.yaml.template; do
 done
 echo "    [OK] All manifest templates rendered cleanly."
 
-if [ "${1:-}" = "--render-only" ]; then
+if [ "${RENDER_ONLY}" = "true" ]; then
   echo "    Render-only mode complete."
   exit 0
 fi

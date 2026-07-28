@@ -125,6 +125,9 @@ if ! command -v kubectl >/dev/null 2>&1; then
 fi
 
 if [ "${MODE}" = "ceiling" ]; then
+  if [ "${TARGET}" = "gateway" ]; then
+    echo "WARNING: '--mode ceiling' measures raw engine capacity. Overriding '--target gateway' -> '--target serving'."
+  fi
   TARGET="serving"
 fi
 
@@ -148,7 +151,7 @@ VIP=$(kubectl get svc "${SERVICE_NAME}" -n llm-serving -o jsonpath='{.status.loa
 
 PF_PIDS=()
 cleanup_port_forward() {
-  for pid in "${PF_PIDS[@]}"; do
+  for pid in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do
     if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
       echo "    Cleaning up background kubectl port-forward (PID: ${pid})..."
       kill "${pid}" 2>/dev/null || true
@@ -227,6 +230,10 @@ METADATA_JSON=$(python3 -c 'import json, sys; print(json.dumps({"engine": sys.ar
 
 # Check for In-Cluster execution mode
 if [ "${IN_CLUSTER}" = "true" ]; then
+  if [ "${MODE}" = "gateway_ab" ]; then
+    echo "ERROR: '--mode gateway_ab' is not supported in --in-cluster mode. Please run locally." >&2
+    exit 1
+  fi
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> Executing In-Cluster Benchmark via Kubernetes Job & ConfigMap..."
@@ -322,6 +329,9 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
     kubectl cp -n llm-serving "${POD_NAME}:/results/prefill_results.json" "${RESULT_DIR}/prefill_results.json" || echo "WARNING: Could not copy prefill_results.json"
   fi
+  if [ "${MODE}" = "ceiling" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/ceiling_results.json" "${RESULT_DIR}/ceiling_results.json" || echo "WARNING: Could not copy ceiling_results.json"
+  fi
 
   # Signal pod that extraction is complete so it can exit 0 cleanly
   kubectl exec -n llm-serving "${POD_NAME}" -- touch /results/.extracted 2>/dev/null || true
@@ -329,7 +339,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   exit 0
 fi
 
-# 3. Execute Standard Benchmark Suite
+# 2. Execute Standard Benchmark Suite
 if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -348,7 +358,7 @@ if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${STD_ARGS[@]}" || echo "WARNING: Standard benchmark reported errors or timeouts."
 fi
 
-# 4. Execute Massive Stress Benchmark Suite
+# 3. Execute Massive Stress Benchmark Suite
 if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -367,7 +377,7 @@ if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/massive_benchmark_glm52.py" "${MAS_ARGS[@]}" || echo "WARNING: Massive benchmark reported errors or timeouts."
 fi
 
-# 5. Execute Continuous Soak Benchmark Suite
+# 4. Execute Continuous Soak Benchmark Suite
 if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -385,7 +395,7 @@ if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/soak_benchmark_glm52.py" "${SOAK_ARGS[@]}" || echo "WARNING: Soak benchmark reported errors or timeouts."
 fi
 
-# 6. Execute Saturation Sweep Suite
+# 5. Execute Saturation Sweep Suite
 if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -401,7 +411,7 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/run_saturation_sweep.py" "${SAT_ARGS[@]}" || echo "WARNING: Saturation sweep reported errors or timeouts."
 fi
 
-# 7. Execute Prefill Ingestion Benchmark Suite
+# 6. Execute Prefill Ingestion Benchmark Suite
 if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -417,7 +427,7 @@ if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" "${PREF_ARGS[@]}" || echo "WARNING: Prefill benchmark reported errors or timeouts."
 fi
 
-# 8. Execute Ceiling Stress Benchmark Suite
+# 7. Execute Ceiling Stress Benchmark Suite
 if [ "${MODE}" = "ceiling" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -436,7 +446,7 @@ if [ "${MODE}" = "ceiling" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${CEIL_ARGS[@]}" || echo "WARNING: Ceiling benchmark reported errors or timeouts."
 fi
 
-# 9. Execute Gateway A/B Comparison Suite
+# 8. Execute Gateway A/B Comparison Suite
 if [ "${MODE}" = "gateway_ab" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -446,14 +456,14 @@ if [ "${MODE}" = "gateway_ab" ]; then
   echo "--> Part 1: Benchmarking Direct Serving (Port 8000)..."
   SERVING_VIP=$(kubectl get svc glm52-serving-svc -n llm-serving -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
   if [ -n "${SERVING_VIP}" ] && curl --connect-timeout 2 -s "http://${SERVING_VIP}:8000/health" >/dev/null 2>&1; then
-    DIRECT_URL="http://${SERVING_VIP}:8000/v1/completions"
+    DIRECT_URL="http://${SERVING_VIP}:8000/v1/chat/completions"
   else
     if ! curl --connect-timeout 2 -s "http://localhost:8000/health" >/dev/null 2>&1; then
       kubectl port-forward -n llm-serving svc/glm52-serving-svc 8000:8000 >/dev/null 2>&1 &
       PF_PIDS+=("$!")
       sleep 3
     fi
-    DIRECT_URL="http://localhost:8000/v1/completions"
+    DIRECT_URL="http://localhost:8000/v1/chat/completions"
   fi
 
   AB_DIR_ARGS=(
@@ -490,10 +500,10 @@ if [ "${MODE}" = "gateway_ab" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${AB_GW_ARGS[@]}" || echo "WARNING: Gateway A/B gateway benchmark reported errors."
 fi
 
-# 10. Display Benchmark Summary
+# 9. Display Benchmark Summary
 echo ""
 echo "=============================================================================="
-echo "Benchmark Execution Summary"
+echo "--> 9. Benchmark Execution Summary"
 echo "=============================================================================="
 if [ -f "${RESULT_DIR}/standard_results.json" ]; then
   echo "Standard Suite Results (${RESULT_DIR}/standard_results.json):"
