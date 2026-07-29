@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "${REPO_ROOT}"
+
 echo "=============================================================================="
 echo "GLM-5.2 Sovereign Enterprise Inference - Automated Validation Suite"
 echo "=============================================================================="
@@ -105,7 +108,7 @@ for f in glob.glob("terraform/manifests/generated/*.yaml"):
                                 sys.stderr.write(f"ERROR: Embedded bash syntax check failed in {f} for container {c_name}\n")
                                 sys.exit(1)
 if checked_count == 0:
-    sys.stderr.write("ERROR: No embedded scripts checked in validate.sh\n")
+    sys.stderr.write("ERROR: No embedded scripts checked in tests/validate_all.sh\n")
     sys.exit(1)
 '
       done
