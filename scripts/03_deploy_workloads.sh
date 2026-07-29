@@ -207,7 +207,7 @@ fi
 if [ "${ENABLE_EXPERT_PARALLEL}" = "true" ] || [ "${ENABLE_EXPERT_PARALLEL}" = "1" ]; then
   # shellcheck disable=SC2089,SC2090
   SGLANG_EXTRA_FLAGS="${SGLANG_EXTRA_FLAGS} \\
-              --enable-ep --ep-size ${EXPERT_PARALLEL_SIZE:-8}"
+              --ep-size ${EXPERT_PARALLEL_SIZE:-8}"
 fi
 # shellcheck disable=SC2089,SC2090
 export SGLANG_EXTRA_FLAGS

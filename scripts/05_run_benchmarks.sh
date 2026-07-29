@@ -230,10 +230,6 @@ METADATA_JSON=$(python3 -c 'import json, sys; print(json.dumps({"engine": sys.ar
 
 # Check for In-Cluster execution mode
 if [ "${IN_CLUSTER}" = "true" ]; then
-  if [ "${MODE}" = "gateway_ab" ]; then
-    echo "ERROR: '--mode gateway_ab' is not supported in --in-cluster mode. Please run locally." >&2
-    exit 1
-  fi
   echo ""
   echo "------------------------------------------------------------------------------"
   echo "--> Executing In-Cluster Benchmark via Kubernetes Job & ConfigMap..."
@@ -331,6 +327,10 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   fi
   if [ "${MODE}" = "ceiling" ]; then
     kubectl cp -n llm-serving "${POD_NAME}:/results/ceiling_results.json" "${RESULT_DIR}/ceiling_results.json" || echo "WARNING: Could not copy ceiling_results.json"
+  fi
+  if [ "${MODE}" = "gateway_ab" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/gateway_ab_direct_results.json" "${RESULT_DIR}/gateway_ab_direct_results.json" || echo "WARNING: Could not copy gateway_ab_direct_results.json"
+    kubectl cp -n llm-serving "${POD_NAME}:/results/gateway_ab_gateway_results.json" "${RESULT_DIR}/gateway_ab_gateway_results.json" || echo "WARNING: Could not copy gateway_ab_gateway_results.json"
   fi
 
   # Signal pod that extraction is complete so it can exit 0 cleanly

@@ -517,6 +517,7 @@ export ENABLE_EXPERT_PARALLEL="false"
 # Run 03_deploy_workloads.sh to render generated/03-vllm-spot-serving.yaml and export environment
 ./scripts/03_deploy_workloads.sh --render-only >/dev/null
 
+git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1 || true
 if git rev-parse --verify origin/main >/dev/null 2>&1; then
   # shellcheck source=/dev/null
   source scripts/config.env
@@ -581,7 +582,8 @@ if [ -f "/tmp/03-vllm-spot-serving.yaml.main_baseline" ]; then
   fi
   echo "    [OK] Check 16 passed: Rendered default vLLM manifest is byte-identical to main baseline."
 else
-  echo "    [OK] Check 16 passed: Default manifest rendered cleanly."
+  echo "ERROR: Check 16 failed: Unable to verify origin/main baseline." >&2
+  exit 1
 fi
 
 # ------------------------------------------------------------------------------

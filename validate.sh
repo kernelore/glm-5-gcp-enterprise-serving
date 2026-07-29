@@ -85,6 +85,7 @@ for f in glob.glob("terraform/manifests/generated/*.yaml"):
         # Verify embedded bash syntax
         python3 -c '
 import yaml, glob, subprocess, sys
+checked_count = 0
 for f in glob.glob("terraform/manifests/generated/*.yaml"):
     with open(f) as fh:
         for doc in yaml.safe_load_all(fh):
@@ -94,10 +95,18 @@ for f in glob.glob("terraform/manifests/generated/*.yaml"):
                 containers = doc.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
                 for c in containers:
                     cmd = c.get("command", [])
-                    if len(cmd) >= 3 and cmd[0] == "/bin/bash" and cmd[1] == "-c":
-                        res = subprocess.run(["bash", "-n"], input=cmd[2], text=True, capture_output=True)
-                        if res.returncode != 0:
-                            sys.exit(1)
+                    if len(cmd) >= 2 and cmd[:2] in [["/bin/bash", "-c"], ["/bin/sh", "-c"]]:
+                        script = cmd[2] if len(cmd) >= 3 else (c.get("args", [])[0] if c.get("args", []) else None)
+                        if script:
+                            checked_count += 1
+                            res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+                            if res.returncode != 0:
+                                c_name = c.get("name", "unknown")
+                                sys.stderr.write(f"ERROR: Embedded bash syntax check failed in {f} for container {c_name}\n")
+                                sys.exit(1)
+if checked_count == 0:
+    sys.stderr.write("ERROR: No embedded scripts checked in validate.sh\n")
+    sys.exit(1)
 '
       done
     done
