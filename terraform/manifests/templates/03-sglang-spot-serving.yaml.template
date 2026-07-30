@@ -127,22 +127,22 @@ spec:
           export CUDA_HOME=/usr/local/cuda
           export PATH=/usr/local/cuda/bin:${PATH}
           export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}
-          
+          ${WARMUP_BLOCK}
           exec python3 -m sglang.launch_server \
               --model-path /mnt/hyperdisk-ml \
               --served-model-name glm-5.2-moe \
               --host 0.0.0.0 --port 8000 \
               --tp-size 8 \
               --context-length 131072 \
-              --max-running-requests 64 \
-              --chunked-prefill-size 8192 \
-              --mem-fraction-static 0.90 \
+              --max-running-requests ${MAX_RUNNING_REQUESTS} \
+              --chunked-prefill-size ${MAX_NUM_BATCHED_TOKENS} \
+              --mem-fraction-static ${MEM_FRACTION_STATIC} \
               --kv-cache-dtype auto \
               --quantization modelopt_fp4 \
               --disable-shared-experts-fusion \
               --reasoning-parser glm45 \
               --tool-call-parser glm47 \
-              --enable-metrics
+              --enable-metrics${SGLANG_EXTRA_FLAGS}
         
         env:
         - name: CUDA_HOME
@@ -179,14 +179,7 @@ spec:
         - name: dshm
           mountPath: /dev/shm
           
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 120
-          periodSeconds: 15
-          timeoutSeconds: 5
-          failureThreshold: 30
+${READINESS_PROBE_BLOCK}
         livenessProbe:
           httpGet:
             path: /health

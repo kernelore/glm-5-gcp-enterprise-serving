@@ -27,7 +27,7 @@ ENGINE_CONTAINER="${INFERENCE_ENGINE}-engine"
 
 PF_PIDS=()
 cleanup_port_forwards() {
-  for pid in "${PF_PIDS[@]}"; do
+  for pid in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do
     if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
       kill "${pid}" 2>/dev/null || true
     fi
@@ -359,7 +359,7 @@ fi
 if ! GOOGLE_API_USE_CLIENT_CERTIFICATE=false python3 "${SCRIPT_DIR}/check_bq.py" \
   --verify-id "${BQ_TEST_ID}" \
   --count-before "${COUNT_BEFORE}" \
-  --timeout 180; then
+  --timeout "${BQ_TIMEOUT:-180}"; then
   echo "      [FAIL] BigQuery audit trajectory verification failed!" >&2
   exit 1
 fi

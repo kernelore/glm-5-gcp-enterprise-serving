@@ -34,6 +34,7 @@ scripts/config.env
 
 # Benchmark and workbench results
 workbench/
+benchmarks/results/experimental/
 
 # Agent workspace metadata
 .agents/

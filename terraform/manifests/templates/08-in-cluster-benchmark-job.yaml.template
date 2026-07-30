@@ -117,6 +117,38 @@ data:
         --output=/results/saturation_results.json || echo "WARNING: saturation benchmark reported errors."
       wait_for_quiesce 300 15
     fi
+    if [ "${BENCHMARK_MODE}" = "ceiling" ]; then
+      echo "Running in-cluster ceiling benchmark..."
+      python3 /scripts/benchmark_glm52.py \
+        --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/completions" \
+        --api-key="EMPTY" \
+        --concurrency="${BENCHMARK_CONCURRENCY:-128}" \
+        --requests="${BENCHMARK_REQUESTS:-256}" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/ceiling_results.json || echo "WARNING: ceiling benchmark reported errors."
+      wait_for_quiesce 300 15
+    fi
+    if [ "${BENCHMARK_MODE}" = "gateway_ab" ]; then
+      echo "Running in-cluster gateway_ab benchmark..."
+      echo "--> Part 1: Direct Serving (port 8000)..."
+      python3 /scripts/benchmark_glm52.py \
+        --endpoint="http://glm52-serving-svc.llm-serving.svc.cluster.local:8000/v1/chat/completions" \
+        --api-key="EMPTY" \
+        --concurrency="${BENCHMARK_CONCURRENCY:-16}" \
+        --requests="${BENCHMARK_REQUESTS:-64}" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/gateway_ab_direct_results.json || echo "WARNING: gateway_ab direct benchmark reported errors."
+      wait_for_quiesce 300 15
+      echo "--> Part 2: Gateway Proxy (port 4000)..."
+      python3 /scripts/benchmark_glm52.py \
+        --endpoint="http://glm52-gateway-svc.llm-serving.svc.cluster.local:4000/v1/chat/completions" \
+        --api-key="${GATEWAY_MASTER_KEY}" \
+        --concurrency="${BENCHMARK_CONCURRENCY:-16}" \
+        --requests="${BENCHMARK_REQUESTS:-64}" \
+        --metadata="$(cat /scripts/metadata.json)" \
+        --output=/results/gateway_ab_gateway_results.json || echo "WARNING: gateway_ab gateway benchmark reported errors."
+      wait_for_quiesce 300 15
+    fi
     echo "In-cluster benchmark execution completed. Results in /results:"
     ls -lh /results/
     touch /results/.done

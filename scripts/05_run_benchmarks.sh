@@ -38,12 +38,14 @@ Usage: $0 [OPTIONS]
 Execute GLM-5.2 performance benchmarks against the GKE serving stack.
 
 Options:
-  --mode <standard|massive|soak|saturation|prefill|all>  Benchmark suite to run (default: all)
+  --mode <standard|massive|soak|saturation|prefill|ceiling|gateway_ab|all>  Benchmark suite to run (default: all)
                                    - standard:   8 concurrent requests, 128 tokens
                                    - massive:    20 concurrent requests, 256 tokens (stress test)
                                    - soak:       30-minute continuous stability endurance test
                                    - saturation: Concurrency sweep (1, 8, 16, 32, 64) to find latency/throughput saturation points
                                    - prefill:    Prompt ingestion stress test (8192 prompt tokens in / 16 out)
+                                   - ceiling:    Maximum concurrency direct engine stress test (128 concurrent requests)
+                                   - gateway_ab: Side-by-side direct engine vs gateway proxy comparison
                                    - all:        Run standard, massive, soak, saturation, and prefill suites sequentially
   --target <gateway|serving>     Target endpoint for benchmarking (default: gateway)
                                    - gateway: LiteLLM Enterprise Proxy (port 4000) with virtual keys & Redis auth
@@ -94,6 +96,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "${MODE}" in
+  standard|massive|soak|saturation|prefill|ceiling|gateway_ab|all)
+    ;;
+  *)
+    echo "ERROR: Unrecognized benchmark mode '${MODE}'. Must be one of: standard, massive, soak, saturation, prefill, ceiling, gateway_ab, all." >&2
+    exit 1
+    ;;
+esac
+
 echo "=============================================================================="
 echo "GLM-5.2 Sovereign Enterprise Inference - Benchmark Execution Suite"
 echo "=============================================================================="
@@ -111,6 +122,13 @@ fi
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "ERROR: kubectl is required to verify cluster endpoints."
   exit 1
+fi
+
+if [ "${MODE}" = "ceiling" ]; then
+  if [ "${TARGET}" = "gateway" ]; then
+    echo "WARNING: '--mode ceiling' measures raw engine capacity. Overriding '--target gateway' -> '--target serving'."
+  fi
+  TARGET="serving"
 fi
 
 # 2. Determine target service details
@@ -131,12 +149,14 @@ fi
 echo "--> 1. Resolving service VIP and connectivity for ${SERVICE_NAME} (port ${REMOTE_PORT})..."
 VIP=$(kubectl get svc "${SERVICE_NAME}" -n llm-serving -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
 
-PF_PID=""
+PF_PIDS=()
 cleanup_port_forward() {
-  if [ -n "${PF_PID}" ] && kill -0 "${PF_PID}" 2>/dev/null; then
-    echo "    Cleaning up background kubectl port-forward (PID: ${PF_PID})..."
-    kill "${PF_PID}" 2>/dev/null || true
-  fi
+  for pid in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      echo "    Cleaning up background kubectl port-forward (PID: ${pid})..."
+      kill "${pid}" 2>/dev/null || true
+    fi
+  done
 }
 trap cleanup_port_forward EXIT
 
@@ -151,6 +171,7 @@ else
   echo "    --> Establishing automated kubectl port-forward (${LOCAL_PORT}:${REMOTE_PORT}) across private fabric..."
   kubectl port-forward -n llm-serving "svc/${SERVICE_NAME}" "${LOCAL_PORT}:${REMOTE_PORT}" >/dev/null 2>&1 &
   PF_PID=$!
+  PF_PIDS+=("${PF_PID}")
   sleep 3
   if ! kill -0 "${PF_PID}" 2>/dev/null; then
     echo "ERROR: Failed to establish kubectl port-forward to svc/${SERVICE_NAME}. Please verify pod health."
@@ -164,7 +185,11 @@ TARGET_URL="${BASE_URL}${ENDPOINT_PATH}"
 echo "    Target Benchmark Endpoint: ${TARGET_URL}"
 
 ENGINE="${INFERENCE_ENGINE:-vllm}"
-RESULT_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
+if [ "${MODE}" = "ceiling" ] || [ "${MODE}" = "gateway_ab" ]; then
+  RESULT_DIR="${PROJECT_ROOT}/benchmarks/results/experimental"
+else
+  RESULT_DIR="${PROJECT_ROOT}/benchmarks/results/${ENGINE}"
+fi
 mkdir -p "${RESULT_DIR}"
 
 IMAGE=$(kubectl get deployment glm52-nvfp4-serving -n llm-serving -o jsonpath='{.spec.template.spec.containers[0].image}') || {
@@ -227,10 +252,10 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   echo "    Rendering in-cluster benchmark Job manifest..."
   mkdir -p "${GENERATED_DIR}"
   case "${MODE}" in
-    standard|massive|soak|saturation|prefill|all)
+    standard|massive|soak|saturation|prefill|ceiling|gateway_ab|all)
       ;;
     *)
-      echo "ERROR: Unrecognized benchmark mode '${MODE}'. Must be one of: standard, massive, soak, saturation, prefill, all." >&2
+      echo "ERROR: Unrecognized benchmark mode '${MODE}'. Must be one of: standard, massive, soak, saturation, prefill, ceiling, gateway_ab, all." >&2
       exit 1
       ;;
   esac
@@ -300,6 +325,13 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
     kubectl cp -n llm-serving "${POD_NAME}:/results/prefill_results.json" "${RESULT_DIR}/prefill_results.json" || echo "WARNING: Could not copy prefill_results.json"
   fi
+  if [ "${MODE}" = "ceiling" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/ceiling_results.json" "${RESULT_DIR}/ceiling_results.json" || echo "WARNING: Could not copy ceiling_results.json"
+  fi
+  if [ "${MODE}" = "gateway_ab" ]; then
+    kubectl cp -n llm-serving "${POD_NAME}:/results/gateway_ab_direct_results.json" "${RESULT_DIR}/gateway_ab_direct_results.json" || echo "WARNING: Could not copy gateway_ab_direct_results.json"
+    kubectl cp -n llm-serving "${POD_NAME}:/results/gateway_ab_gateway_results.json" "${RESULT_DIR}/gateway_ab_gateway_results.json" || echo "WARNING: Could not copy gateway_ab_gateway_results.json"
+  fi
 
   # Signal pod that extraction is complete so it can exit 0 cleanly
   kubectl exec -n llm-serving "${POD_NAME}" -- touch /results/.extracted 2>/dev/null || true
@@ -307,7 +339,7 @@ if [ "${IN_CLUSTER}" = "true" ]; then
   exit 0
 fi
 
-# 3. Execute Standard Benchmark Suite
+# 2. Execute Standard Benchmark Suite
 if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -326,7 +358,7 @@ if [ "${MODE}" = "standard" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${STD_ARGS[@]}" || echo "WARNING: Standard benchmark reported errors or timeouts."
 fi
 
-# 4. Execute Massive Stress Benchmark Suite
+# 3. Execute Massive Stress Benchmark Suite
 if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -345,7 +377,7 @@ if [ "${MODE}" = "massive" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/massive_benchmark_glm52.py" "${MAS_ARGS[@]}" || echo "WARNING: Massive benchmark reported errors or timeouts."
 fi
 
-# 5. Execute Continuous Soak Benchmark Suite
+# 4. Execute Continuous Soak Benchmark Suite
 if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -363,7 +395,7 @@ if [ "${MODE}" = "soak" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/soak_benchmark_glm52.py" "${SOAK_ARGS[@]}" || echo "WARNING: Soak benchmark reported errors or timeouts."
 fi
 
-# 6. Execute Saturation Sweep Suite
+# 5. Execute Saturation Sweep Suite
 if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -379,7 +411,7 @@ if [ "${MODE}" = "saturation" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/run_saturation_sweep.py" "${SAT_ARGS[@]}" || echo "WARNING: Saturation sweep reported errors or timeouts."
 fi
 
-# 7. Execute Prefill Ingestion Benchmark Suite
+# 6. Execute Prefill Ingestion Benchmark Suite
 if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
   echo ""
   echo "------------------------------------------------------------------------------"
@@ -395,10 +427,83 @@ if [ "${MODE}" = "prefill" ] || [ "${MODE}" = "all" ]; then
   python3 "${PROJECT_ROOT}/benchmarks/run_prefill_benchmark.py" "${PREF_ARGS[@]}" || echo "WARNING: Prefill benchmark reported errors or timeouts."
 fi
 
-# 8. Display Benchmark Summary
+# 7. Execute Ceiling Stress Benchmark Suite
+if [ "${MODE}" = "ceiling" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  echo "--> 7. Executing Ceiling Stress Suite (concurrency=${CONCURRENCY:-128}, target=serving)..."
+  echo "------------------------------------------------------------------------------"
+
+  CEIL_ARGS=(
+    "--endpoint=${BASE_URL}/v1/completions"
+    "--output=${RESULT_DIR}/ceiling_results.json"
+    "--api-key=EMPTY"
+    "--metadata=${METADATA_JSON}"
+  )
+  if [ -n "${CONCURRENCY}" ]; then CEIL_ARGS+=("--concurrency=${CONCURRENCY}"); else CEIL_ARGS+=("--concurrency=128"); fi
+  if [ -n "${REQUESTS}" ]; then CEIL_ARGS+=("--requests=${REQUESTS}"); else CEIL_ARGS+=("--requests=256"); fi
+
+  python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${CEIL_ARGS[@]}" || echo "WARNING: Ceiling benchmark reported errors or timeouts."
+fi
+
+# 8. Execute Gateway A/B Comparison Suite
+if [ "${MODE}" = "gateway_ab" ]; then
+  echo ""
+  echo "------------------------------------------------------------------------------"
+  echo "--> 8. Executing Gateway A/B Comparison Suite (Direct Serving vs Gateway Proxy)..."
+  echo "------------------------------------------------------------------------------"
+
+  echo "--> Part 1: Benchmarking Direct Serving (Port 8000)..."
+  SERVING_VIP=$(kubectl get svc glm52-serving-svc -n llm-serving -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+  if [ -n "${SERVING_VIP}" ] && curl --connect-timeout 2 -s "http://${SERVING_VIP}:8000/health" >/dev/null 2>&1; then
+    DIRECT_URL="http://${SERVING_VIP}:8000/v1/chat/completions"
+  else
+    if ! curl --connect-timeout 2 -s "http://localhost:8000/health" >/dev/null 2>&1; then
+      kubectl port-forward -n llm-serving svc/glm52-serving-svc 8000:8000 >/dev/null 2>&1 &
+      PF_PIDS+=("$!")
+      sleep 3
+    fi
+    DIRECT_URL="http://localhost:8000/v1/chat/completions"
+  fi
+
+  AB_DIR_ARGS=(
+    "--endpoint=${DIRECT_URL}"
+    "--output=${RESULT_DIR}/gateway_ab_direct_results.json"
+    "--api-key=EMPTY"
+    "--metadata=${METADATA_JSON}"
+  )
+  if [ -n "${CONCURRENCY}" ]; then AB_DIR_ARGS+=("--concurrency=${CONCURRENCY}"); else AB_DIR_ARGS+=("--concurrency=16"); fi
+  if [ -n "${REQUESTS}" ]; then AB_DIR_ARGS+=("--requests=${REQUESTS}"); else AB_DIR_ARGS+=("--requests=64"); fi
+  python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${AB_DIR_ARGS[@]}" || echo "WARNING: Gateway A/B direct benchmark reported errors."
+
+  echo "--> Part 2: Benchmarking Gateway Proxy (Port 4000)..."
+  GATEWAY_VIP=$(kubectl get svc glm52-gateway-svc -n llm-serving -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+  if [ -n "${GATEWAY_VIP}" ] && curl --connect-timeout 2 -s "http://${GATEWAY_VIP}:4000/health/liveliness" >/dev/null 2>&1; then
+    GW_URL="http://${GATEWAY_VIP}:4000/v1/chat/completions"
+  else
+    if ! curl --connect-timeout 2 -s "http://localhost:4000/health/liveliness" >/dev/null 2>&1; then
+      kubectl port-forward -n llm-serving svc/glm52-gateway-svc 4000:4000 >/dev/null 2>&1 &
+      PF_PIDS+=("$!")
+      sleep 3
+    fi
+    GW_URL="http://localhost:4000/v1/chat/completions"
+  fi
+
+  AB_GW_ARGS=(
+    "--endpoint=${GW_URL}"
+    "--output=${RESULT_DIR}/gateway_ab_gateway_results.json"
+    "--api-key=${GATEWAY_MASTER_KEY:-sk-glm52-master-secret-key-change-me}"
+    "--metadata=${METADATA_JSON}"
+  )
+  if [ -n "${CONCURRENCY}" ]; then AB_GW_ARGS+=("--concurrency=${CONCURRENCY}"); else AB_GW_ARGS+=("--concurrency=16"); fi
+  if [ -n "${REQUESTS}" ]; then AB_GW_ARGS+=("--requests=${REQUESTS}"); else AB_GW_ARGS+=("--requests=64"); fi
+  python3 "${PROJECT_ROOT}/benchmarks/benchmark_glm52.py" "${AB_GW_ARGS[@]}" || echo "WARNING: Gateway A/B gateway benchmark reported errors."
+fi
+
+# 9. Display Benchmark Summary
 echo ""
 echo "=============================================================================="
-echo "Benchmark Execution Summary"
+echo "--> 9. Benchmark Execution Summary"
 echo "=============================================================================="
 if [ -f "${RESULT_DIR}/standard_results.json" ]; then
   echo "Standard Suite Results (${RESULT_DIR}/standard_results.json):"

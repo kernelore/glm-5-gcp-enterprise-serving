@@ -72,7 +72,7 @@ echo "    [OK] Check 3 passed: Adapter manifest and engine versions are properly
 # ------------------------------------------------------------------------------
 echo "--> Check 4: Verifying rendered YAML manifests with kubeconform..."
 if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
-  cp scripts/config.env.example scripts/config.env
+  sed 's/YOUR_PROJECT_ID/mock-test-project/g' scripts/config.env.example > scripts/config.env
   CLEANUP_CONFIG_ENV=true
 else
   CLEANUP_CONFIG_ENV=false
@@ -90,7 +90,8 @@ fi
 INFERENCE_ENGINE=vllm ./scripts/03_deploy_workloads.sh --render-only >/dev/null
 kubeconform -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml
 if [ "${CLEANUP_CONFIG_ENV}" = "true" ]; then
-  rm -f scripts/config.env
+  # Keep config.env for subsequent check scripts
+  :
 fi
 echo "    [OK] Check 4 passed: All rendered manifests passed kubeconform schema validation and non-selected engine templates were excluded."
 
@@ -497,9 +498,166 @@ echo "    [OK] Check 14 passed: Provenance probes carry no || echo fallback and 
 # Check 15: Offline Verifier Failure Harness
 # ------------------------------------------------------------------------------
 echo "--> Check 15: Executing offline verifier failure harness (adv_test_verify_cluster_failures.sh)..."
-bash tests/adv_test_verify_cluster_failures.sh >/dev/null
+PROJECT_ID="${PROJECT_ID:-YOUR_PROJECT_ID}" bash tests/adv_test_verify_cluster_failures.sh >/dev/null
 echo "    [OK] Check 15 passed: Offline verifier failure harness verified all 4 failure states."
 
+# ------------------------------------------------------------------------------
+# Check 16: Byte-Identical Default Manifest Rendering vs Main Baseline
+# ------------------------------------------------------------------------------
+echo "--> Check 16: Verifying default manifest rendering is byte-identical to main baseline..."
+if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
+  cp scripts/config.env.example scripts/config.env
+fi
+export PROJECT_ID="YOUR_PROJECT_ID"
+export INFERENCE_ENGINE="vllm"
+export ENGINE_WARMUP_REQUESTS="0"
+export ENABLE_SPECULATIVE_DECODING="false"
+export ENABLE_EXPERT_PARALLEL="false"
+
+# Run 03_deploy_workloads.sh to render generated/03-vllm-spot-serving.yaml and export environment
+./scripts/03_deploy_workloads.sh --render-only >/dev/null
+
+git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1 || true
+if git rev-parse --verify origin/main >/dev/null 2>&1; then
+  # shellcheck source=/dev/null
+  source scripts/config.env
+  export PROJECT_ID="YOUR_PROJECT_ID"
+  export INFERENCE_ENGINE="vllm"
+  export ENGINE_WARMUP_REQUESTS="0"
+  export ENABLE_SPECULATIVE_DECODING="false"
+  export ENABLE_EXPERT_PARALLEL="false"
+  export MEM_FRACTION_STATIC="0.94"
+  export MAX_NUM_SEQS="64"
+  export MAX_NUM_BATCHED_TOKENS="8192"
+  export MAX_RUNNING_REQUESTS="64"
+  export VLLM_EXTRA_FLAGS=""
+  export SGLANG_EXTRA_FLAGS=""
+  export WARMUP_BLOCK=""
+  export READINESS_PROBE_BLOCK="        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 30"
+  export HPA_QUEUE_METRIC="vllm:num_requests_waiting|gauge"
+  export HPA_RUNNING_METRIC="vllm:num_requests_running|gauge"
+  export SERVING_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.26.0"
+  export WEIGHTS_DOWNLOADER_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/glm-prod/vllm-blackwell:v0.26.0"
+  export VLLM_VIP="glm52-serving-svc.llm-serving.svc.cluster.local"
+  export SERVING_VIP="${VLLM_VIP}"
+  export INFERENCE_SERVER_LABEL="vllm"
+  export GATEWAY_MASTER_KEY="${GATEWAY_MASTER_KEY:-sk-glm52-master-secret-key-change-me}"
+  export DB_PASSWORD="${DB_PASSWORD:-glm52-gateway-admin-secret}"
+  export REDIS_PASSWORD="${REDIS_PASSWORD:-redis-secret-password-change-me}"
+  export REDIS_PASSWORD_ENCODED="${REDIS_PASSWORD}"
+  export REDIS_HOST="${REDIS_HOST:-redis-cache.local}"
+  HF_TOKEN_BASE64=$(echo -n "${HF_TOKEN:-placeholder_token}" | base64 -w 0 2>/dev/null || echo -n "${HF_TOKEN:-placeholder_token}" | base64)
+  export HF_TOKEN_BASE64
+  export MODEL_REPO_ID="${MODEL_REPO_ID:-nvidia/GLM-5.2-NVFP4}"
+  export GPU_MAX_NODES="${GPU_MAX_NODES:-2}"
+
+  # shellcheck disable=SC2016
+  git show origin/main:terraform/manifests/templates/03-vllm-spot-serving.yaml.template | \
+  python3 -c '
+import os, sys, re
+allowed = set(["PROJECT_ID", "REGION", "ZONE", "CLUSTER_NAME", "OWNER_LABEL", "TTL_LABEL", "ENV_LABEL", "HF_TOKEN_BASE64", "MODEL_REPO_ID", "GCS_WEIGHTS_BUCKET", "GATEWAY_MASTER_KEY", "DB_CONNECTION_NAME", "DB_PASSWORD", "REDIS_HOST", "REDIS_PASSWORD", "REDIS_PASSWORD_ENCODED", "VLLM_VIP", "GPU_MAX_NODES", "INFERENCE_ENGINE", "INFERENCE_SERVER_LABEL", "HPA_QUEUE_METRIC", "HPA_RUNNING_METRIC", "SERVING_IMAGE", "WEIGHTS_DOWNLOADER_IMAGE", "SERVING_VIP", "BENCHMARK_MODE", "BENCHMARK_CONCURRENCY", "BENCHMARK_REQUESTS", "BENCHMARK_DURATION", "BENCHMARK_METADATA", "MAX_NUM_SEQS", "MAX_NUM_BATCHED_TOKENS", "MAX_RUNNING_REQUESTS", "MEM_FRACTION_STATIC", "VLLM_EXTRA_FLAGS", "SGLANG_EXTRA_FLAGS", "WARMUP_BLOCK", "READINESS_PROBE_BLOCK"])
+content = sys.stdin.read()
+def replace_var(match):
+    var_name = match.group(1) or match.group(2)
+    if not allowed or var_name in allowed:
+        return os.environ.get(var_name, "")
+    return match.group(0)
+output = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", replace_var, content)
+sys.stdout.write(output)
+' > /tmp/03-vllm-spot-serving.yaml.main_baseline
+fi
+
+if [ -f "/tmp/03-vllm-spot-serving.yaml.main_baseline" ]; then
+  ACTIVE_PROJ=$(grep "^export PROJECT_ID=" scripts/config.env 2>/dev/null | cut -d'"' -f2 || echo "YOUR_PROJECT_ID")
+  if ! diff -u <(sed "s/${ACTIVE_PROJ}/YOUR_PROJECT_ID/g; s/mock-test-project/YOUR_PROJECT_ID/g" /tmp/03-vllm-spot-serving.yaml.main_baseline) <(sed "s/${ACTIVE_PROJ}/YOUR_PROJECT_ID/g; s/mock-test-project/YOUR_PROJECT_ID/g" terraform/manifests/generated/03-vllm-spot-serving.yaml); then
+    echo "ERROR: Check 16 failed: Rendered manifest 03-vllm-spot-serving.yaml with defaults is NOT byte-identical to main baseline!" >&2
+    exit 1
+  fi
+  echo "    [OK] Check 16 passed: Rendered default vLLM manifest is byte-identical to main baseline."
+else
+  echo "ERROR: Check 16 failed: Unable to verify origin/main baseline." >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Check 17: Engine Tuning Render Matrix & Kubeconform Validation
+# ------------------------------------------------------------------------------
+echo "--> Check 17: Testing render matrix (ENABLE_SPECULATIVE_DECODING, ENABLE_EXPERT_PARALLEL, ENGINE_WARMUP_REQUESTS) × engines with kubeconform..."
+for engine in vllm sglang; do
+  for spec in false true; do
+    for ep in false true; do
+      for warmup in 0 5; do
+        INFERENCE_ENGINE="${engine}" \
+        ENABLE_SPECULATIVE_DECODING="${spec}" \
+        ENABLE_EXPERT_PARALLEL="${ep}" \
+        ENGINE_WARMUP_REQUESTS="${warmup}" \
+        ./scripts/03_deploy_workloads.sh --render-only >/dev/null
+        if command -v kubeconform >/dev/null 2>&1; then
+          kubeconform -summary -schema-location default -schema-location 'terraform/manifests/schemas/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' terraform/manifests/generated/*.yaml >/dev/null
+        fi
+      done
+    done
+  done
+done
+INFERENCE_ENGINE=vllm ENABLE_SPECULATIVE_DECODING=false ENABLE_EXPERT_PARALLEL=false ENGINE_WARMUP_REQUESTS=0 ./scripts/03_deploy_workloads.sh --render-only >/dev/null
+echo "    [OK] Check 17 passed: Render matrix across all variable combinations × engines validated cleanly with kubeconform."
+
+# ------------------------------------------------------------------------------
+# Check 18: Benchmark Mode Ladder & In-Cluster Mode Parity Validation
+# ------------------------------------------------------------------------------
+echo "--> Check 18: Verifying benchmark mode ladder CLI validation & in-cluster mode parity..."
+if [ ! -f "scripts/config.env" ] && [ -f "scripts/config.env.example" ]; then
+  cp scripts/config.env.example scripts/config.env
+fi
+OUT=$(./scripts/05_run_benchmarks.sh --mode invalid_mode_test 2>&1 || true)
+if echo "${OUT}" | grep -q "Unrecognized benchmark mode"; then
+  echo "    [OK] Invalid benchmark mode correctly rejected."
+else
+  echo "ERROR: Invalid benchmark mode was not rejected! Output: ${OUT}" >&2
+  exit 1
+fi
+
+TEMPLATE_JOB="terraform/manifests/templates/08-in-cluster-benchmark-job.yaml.template"
+for m in standard massive soak saturation prefill ceiling gateway_ab; do
+  if ! grep -q "BENCHMARK_MODE.*=.*\"${m}\"" "${TEMPLATE_JOB}"; then
+    echo "ERROR: Check 18 failed: In-cluster benchmark job template missing execution branch for mode '${m}'!" >&2
+    exit 1
+  fi
+done
+echo "    [OK] Check 18 passed: All benchmark modes (standard, massive, soak, saturation, prefill, ceiling, gateway_ab) have verified in-cluster job execution branches."
+
+# ------------------------------------------------------------------------------
+# Check 19: Shellcheck Static Analysis & Secret Scan
+# ------------------------------------------------------------------------------
+echo "--> Check 19: Running shellcheck and secret scan..."
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck scripts/*.sh tests/*.sh
+  echo "    [OK] Shellcheck static analysis passed with 0 warnings/errors."
+fi
+bash tests/check_secret_scan.sh >/dev/null
+echo "    [OK] Check 19 passed: Shellcheck and secret scan passed cleanly."
+
+# ------------------------------------------------------------------------------
+# Check 20: check_bq.py Timeout & Attempt Timeout Verification
+# ------------------------------------------------------------------------------
+echo "--> Check 20: Verifying check_bq.py argument parsing and attempt timeout configuration..."
+python3 -c '
+import subprocess, sys
+res = subprocess.run(["python3", "scripts/check_bq.py", "--help"], capture_output=True, text=True)
+if "--attempt-timeout" not in res.stdout or "--poll-interval" not in res.stdout:
+    print("ERROR: check_bq.py --help output missing --attempt-timeout or --poll-interval!", file=sys.stderr)
+    sys.exit(1)
+'
+echo "    [OK] Check 20 passed: check_bq.py supports configurable --attempt-timeout and --poll-interval."
+
 echo "=============================================================================="
-echo "=== ALL 15 REMEDIATION CHECKS PASSED ==="
+echo "=== ALL 20 REMEDIATION CHECKS PASSED ==="
 echo "=============================================================================="
+

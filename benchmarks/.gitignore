@@ -7,3 +7,6 @@ results/
 !results/
 !results/*/
 !results/**/*.json
+
+# Ignore experimental benchmark results
+results/experimental/
