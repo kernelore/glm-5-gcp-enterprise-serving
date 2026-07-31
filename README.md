@@ -1,4 +1,4 @@
-# GLM-5.2 NVFP4 Sovereign Enterprise Inference Architecture
+# GLM-5.2 NVFP4 Enterprise Inference Architecture
 
 [![Google Cloud](https://img.shields.io/badge/Google_Cloud-Blackwell_B200-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/compute/docs/gpus)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-NVFP4_MoE-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/)
@@ -28,7 +28,7 @@ multiple availability zones behind the internal load balancer.
 
 ## ⚡ Architecture Overview
 
-This repository provides production-ready infrastructure engineering specifications and automated deployment scripts for hosting **GLM-5.2 (~381B total parameters, 47 safetensors shards, ~465 GB on disk)** in a secure, private, and sovereign Google Cloud environment.
+This repository provides production-ready infrastructure engineering specifications and automated deployment scripts for hosting **GLM-5.2 (~381B total parameters, 47 safetensors shards, ~465 GB on disk)** in a secure, private, and Google Cloud environment.
 
 To achieve breakthrough economics and sub-second token latency, this architecture co-designs **NVIDIA Blackwell (`B200`)** accelerators with **NVFP4 (4-bit floating point)** quantization. While intra-node serving utilizes **Tensor Parallelism (`TP=8`)** across high-speed NVLink (`1.8 TB/s`), the architecture is built on a decoupled storage model that scales out horizontally to **$N$ nodes via Data Parallelism (`DP=N`)** backed by a shared read-only **Hyperdisk ML (`ROX`)** volume.
 
